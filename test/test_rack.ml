@@ -1,0 +1,258 @@
+(* test_rack.ml — exercise the extracted RACK library *)
+
+let to_bool : Rack.bool -> Stdlib.Bool.t = function
+  | Rack.True -> true
+  | Rack.False -> false
+
+open Rack
+open Rack_util
+
+let pass label = Printf.printf "  PASS  %s\n" label
+let fail label = Printf.printf "  FAIL  %s\n" label; Stdlib.exit 1
+
+let assert_true label b = if b then pass label else fail label
+let assert_false label b = if not b then pass label else fail label
+let assert_coq_true label b = assert_true label (to_bool b)
+let assert_coq_false label b = assert_false label (to_bool b)
+let assert_true_native = assert_true
+
+(* --- build a small assurance case --- *)
+
+let goal_node = {
+  node_id = coq_of_string "G1";
+  node_kind = Goal;
+  node_claim_text = coq_of_string "2+2=4";
+  node_evidence = None;
+  node_metadata = Nil;
+}
+
+let solution_node = {
+  node_id = coq_of_string "E1";
+  node_kind = Solution;
+  node_claim_text = coq_of_string "2+2=4";
+  node_evidence = Some (ProofTerm (coq_of_string "proof", Some (fun _ -> True)));
+  node_metadata = Nil;
+}
+
+let link1 = {
+  link_kind = SupportedBy;
+  link_from = coq_of_string "G1";
+  link_to = coq_of_string "E1";
+}
+
+let ac = {
+  ac_nodes = Cons (goal_node, Cons (solution_node, Nil));
+  ac_links = Cons (link1, Nil);
+  ac_top = coq_of_string "G1";
+}
+
+(* --- tests --- *)
+
+let () =
+  Printf.printf "=== RACK extracted OCaml tests ===\n";
+
+  (* check_wf_extended *)
+  Printf.printf "\n[check_wf_extended]\n";
+  assert_coq_true "well-formed simple case" (check_wf_extended ac);
+
+  (* structural_checks *)
+  Printf.printf "\n[structural_checks]\n";
+  assert_coq_true "structural simple case" (structural_checks ac);
+
+  (* check_support_tree *)
+  Printf.printf "\n[check_support_tree]\n";
+  assert_coq_true "support tree simple case"
+    (check_support_tree ac (coq_of_string "G1"));
+
+  (* compute_support_witness *)
+  Printf.printf "\n[compute_support_witness]\n";
+  assert_true_native "witness exists"
+    (match compute_support_witness ac (coq_of_string "G1") with
+     | Some _ -> true | None -> false);
+
+  (* find_node *)
+  Printf.printf "\n[find_node / find_node_indexed]\n";
+  let idx = build_node_index ac in
+  assert_true_native "find_node G1"
+    (match find_node ac (coq_of_string "G1") with
+     | Some _ -> true | None -> false);
+  assert_true_native "find_node_indexed G1"
+    (match find_node_indexed idx (coq_of_string "G1") with
+     | Some _ -> true | None -> false);
+
+  (* evidence_label *)
+  Printf.printf "\n[evidence_label]\n";
+  let lbl = evidence_label (ProofTerm (coq_of_string "my_thm", Some (fun _ -> True))) in
+  assert_true_native "label is my_thm"
+    (string_of_coq lbl = "my_thm");
+
+  (* evidence_runtime_check *)
+  Printf.printf "\n[evidence_runtime_check]\n";
+  assert_coq_true "ProofTerm None -> true"
+    (evidence_runtime_check (ProofTerm (coq_of_string "x", None)));
+  assert_coq_true "ProofTerm Some -> calls thunk"
+    (evidence_runtime_check (ProofTerm (coq_of_string "x",
+      Some (fun _ -> True))));
+  let v = fun s -> if s = coq_of_string "ok" then True else False in
+  assert_coq_true "Certificate valid"
+    (evidence_runtime_check (Certificate (coq_of_string "ok",
+      coq_of_string "test-tool", v)));
+
+  (* evidence_tool *)
+  Printf.printf "\n[evidence_tool]\n";
+  let tool = evidence_tool (Certificate (coq_of_string "blob",
+    coq_of_string "CBMC", fun _ -> True)) in
+  assert_true "tool is CBMC"
+    (string_of_coq tool = "CBMC");
+
+  (* JSON export *)
+  Printf.printf "\n[render_json]\n";
+  let json_str = render_assurance_case ac in
+  let s = string_of_coq json_str in
+  assert_true "JSON non-empty" (String.length s > 0);
+  assert_true "JSON has G1"
+    (try let _ = Str.search_forward (Str.regexp_string "G1") s 0 in true
+     with Not_found -> false);
+
+  (* JSON round-trip *)
+  Printf.printf "\n[parse_json round-trip]\n";
+  (match parse_json json_str with
+   | Some j ->
+     assert_true "parse_json succeeds" true;
+     (match json_to_assurance_case j with
+      | Some ac2 ->
+        assert_true "json_to_assurance_case succeeds" true;
+        let top = string_of_coq ac2.ac_top in
+        assert_true ("round-trip top = G1, got " ^ top) (top = "G1")
+      | None ->
+        assert_true "json_to_assurance_case succeeds" false)
+   | None ->
+     assert_true "parse_json succeeds" false);
+
+  (* DOT export *)
+  Printf.printf "\n[render_dot]\n";
+  let dot_str = render_dot ac in
+  let dot_s = string_of_coq dot_str in
+  assert_true "DOT non-empty" (String.length dot_s > 0);
+
+  (* DOT with options *)
+  Printf.printf "\n[render_dot_with_options]\n";
+  let dot_opts = render_dot_with_options default_dot_options ac in
+  assert_true "DOT opts non-empty" (String.length (string_of_coq dot_opts) > 0);
+
+  (* SACM export *)
+  Printf.printf "\n[render_sacm]\n";
+  let sacm_str = render_sacm ac in
+  let sacm_s = string_of_coq sacm_str in
+  assert_true "SACM non-empty" (String.length sacm_s > 0);
+  assert_true "SACM has xml"
+    (try let _ = Str.search_forward (Str.regexp_string "xml") sacm_s 0 in true
+     with Not_found -> false);
+
+  (* compose_cases *)
+  Printf.printf "\n[compose_cases]\n";
+  let parent_goal_node = {
+    node_id = coq_of_string "G-parent";
+    node_kind = Goal;
+    node_claim_text = coq_of_string "parent";
+    node_evidence = None;
+    node_metadata = Nil;
+  } in
+  let parent = {
+    ac_nodes = Cons (parent_goal_node, Nil);
+    ac_links = Nil;
+    ac_top = coq_of_string "G-parent";
+  } in
+  let composed = compose_cases parent ac (coq_of_string "G-parent") in
+  assert_coq_true "composed well-formed" (check_wf_extended composed);
+  assert_coq_true "composed structural" (structural_checks composed);
+
+  (* diagnose_all *)
+  Printf.printf "\n[diagnose_all]\n";
+  (match diagnose_all ac with
+   | Nil -> assert_true "no errors for valid case" true
+   | _ -> assert_true "no errors for valid case" false);
+
+  (* check_node / check_link *)
+  Printf.printf "\n[check_node / check_link]\n";
+  assert_coq_true "check_node G1"
+    (check_node ac (coq_of_string "G1"));
+  assert_coq_true "check_link"
+    (check_link ac link1);
+
+  (* streaming export *)
+  Printf.printf "\n[streaming]\n";
+  (match stream_json_lines ac with
+   | Nil -> assert_true "stream non-empty" false
+   | _ -> assert_true "stream non-empty" true);
+  (match stream_dot_lines ac with
+   | Nil -> assert_true "dot stream non-empty" false
+   | _ -> assert_true "dot stream non-empty" true);
+
+  (* metadata *)
+  Printf.printf "\n[metadata]\n";
+  let md_node = {
+    node_id = coq_of_string "test";
+    node_kind = Solution;
+    node_claim_text = coq_of_string "test";
+    node_evidence = None;
+    node_metadata = Cons (Pair (coq_of_string "key",
+                                MVString (coq_of_string "val")), Nil);
+  } in
+  (match find_metadata (coq_of_string "key") md_node.node_metadata with
+   | Some (MVString v) -> assert_true "find_metadata"
+     (string_of_coq v = "val")
+   | _ -> assert_true "find_metadata" false);
+
+  (* negative: bad case *)
+  Printf.printf "\n[negative cases]\n";
+  let bad = {
+    ac_nodes = Cons (goal_node, Nil);
+    ac_links = Cons (link1, Nil);
+    ac_top = coq_of_string "G1";
+  } in
+  assert_coq_false "dangling link rejected" (check_wf_extended bad);
+  (match diagnose_all bad with
+   | Nil -> assert_true "diagnose finds errors" false
+   | _ -> assert_true "diagnose finds errors" true);
+
+  (* keyed validator *)
+  Printf.printf "\n[keyed validator]\n";
+  let secret = "test-secret-key" in
+  let payload = "CBMC:all_assertions_hold:v6.0" in
+  let signed = Rack_util.sign_blob secret payload in
+  let validator = Rack_util.make_keyed_validator secret in
+  assert_coq_true "signed blob validates"
+    (validator (coq_of_string signed));
+  assert_coq_false "tampered blob rejected"
+    (validator (coq_of_string (signed ^ "x")));
+  assert_coq_false "wrong secret rejected"
+    ((Rack_util.make_keyed_validator "wrong-key") (coq_of_string signed));
+
+  (* keyed validator as Certificate evidence *)
+  Printf.printf "\n[keyed Certificate]\n";
+  let keyed_cert = Certificate (coq_of_string signed,
+    coq_of_string "CBMC",
+    Rack_util.make_keyed_validator secret) in
+  assert_coq_true "keyed cert runtime check"
+    (evidence_runtime_check keyed_cert);
+  assert_true "keyed cert tool is CBMC"
+    (string_of_coq (evidence_tool keyed_cert) = "CBMC");
+
+  (* NIST FIPS 180-4 SHA-256 test vectors *)
+  Printf.printf "\n[SHA-256 NIST vectors]\n";
+  (* Vector 1: "abc" *)
+  assert_true "SHA-256 abc"
+    (Rack_util.sha256_hex "abc" =
+     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  (* Vector 2: "" (empty string) *)
+  assert_true "SHA-256 empty"
+    (Rack_util.sha256_hex "" =
+     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  (* Vector 3: "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq" *)
+  assert_true "SHA-256 448-bit"
+    (Rack_util.sha256_hex
+       "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq" =
+     "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+
+  Printf.printf "\n=== All tests passed ===\n"

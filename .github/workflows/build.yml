@@ -1,0 +1,164 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: sudo chmod -R a+rwX "$GITHUB_WORKSPACE"
+
+      - uses: coq-community/docker-coq-action@v1
+        with:
+          coq_version: '9.0'
+          ocaml_version: '4.14-flambda'
+          custom_script: |
+            startGroup "Build (timed)"
+            BUILD_START=$(date +%s)
+            make
+            BUILD_END=$(date +%s)
+            BUILD_SECS=$((BUILD_END - BUILD_START))
+            echo "::notice::Rocq build completed in ${BUILD_SECS}s"
+            if [ "$BUILD_SECS" -gt 600 ]; then
+              echo "::warning::Rocq build took ${BUILD_SECS}s (>600s threshold) — possible vm_compute regression"
+            fi
+            endGroup
+            startGroup "Check extraction produces no warnings"
+            if grep -q 'Warning' rack.ml 2>/dev/null; then
+              echo "Extraction warnings found in rack.ml"
+              grep 'Warning' rack.ml
+              exit 1
+            fi
+            echo "No extraction warnings found"
+            endGroup
+            startGroup "Build OCaml binaries"
+            make ocaml
+            endGroup
+            startGroup "Run OCaml tests"
+            ./test_rack
+            ./test_rack_prop
+            ./test_rack_extended
+            endGroup
+            startGroup "Validate SACM export structure"
+            if [ -f ocaml/rack_sacm_validate.ml ]; then
+              ( ocamlfind ocamlopt -package str -linkpkg rack.ml ocaml/rack_util.ml ocaml/rack_sacm_validate.ml -o rack_sacm_validate 2>/dev/null && \
+                echo "SACM validator compiled" ) || \
+              echo "SACM validator compilation skipped (non-fatal)"
+            fi
+            if [ -x ./rack_cli ]; then
+              SACM=$(echo '{"top":"G1","nodes":[{"id":"G1","kind":"Goal","claim":"test","evidence":null,"metadata":{}},{"id":"E1","kind":"Solution","claim":"proof","evidence":{"type":"ProofTerm","label":"p"},"metadata":{}}],"links":[{"kind":"SupportedBy","from":"G1","to":"E1"}]}' | ./rack_cli --sacm)
+              echo "$SACM" | grep -q '<?xml version=' && echo "PASS: XML declaration" || echo "FAIL: XML declaration"
+              echo "$SACM" | grep -q 'sacm:ArgumentPackage' && echo "PASS: ArgumentPackage element" || echo "FAIL: ArgumentPackage element"
+              echo "$SACM" | grep -q '</sacm:ArgumentPackage>' && echo "PASS: closing tag" || echo "FAIL: closing tag"
+              echo "$SACM" | grep -q 'Claim id=' && echo "PASS: Claim element" || echo "FAIL: Claim element"
+              echo "$SACM" | grep -q 'ArtifactReference id=' && echo "PASS: ArtifactReference element" || echo "FAIL: ArtifactReference element"
+            fi
+            endGroup
+            startGroup "Generate coqdoc"
+            mkdir -p docs
+            coqdoc --html --interpolate --utf8 \
+              -R theories RACK \
+              -d docs \
+              theories/Core.v theories/Main.v theories/Reflect.v \
+              theories/Export.v theories/Notation.v \
+              theories/EvidenceClass.v theories/ProofIdentity.v \
+              theories/Entailment.v theories/Trace.v \
+              theories/Delta.v theories/Incremental.v \
+              theories/ProductLine.v theories/Bridge.v \
+              theories/CaseStudy.v theories/Example.v \
+              || echo "coqdoc generation failed (non-fatal)"
+            endGroup
+      - name: Upload coqdoc
+        if: github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coqdoc
+          path: docs/
+
+      - name: Deploy coqdoc to GitHub Pages
+        if: github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          destination_dir: coqdoc
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run agent and driver tests
+        run: |
+          python agent/test_agent.py
+          python agent/test_driver.py
+
+  deepspec:
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: sudo chmod -R a+rwX "$GITHUB_WORKSPACE"
+
+      - uses: coq-community/docker-coq-action@v1
+        with:
+          custom_image: ghcr.io/charlescnorton/rack-deepspec:latest
+          custom_script: |
+            startGroup "Build base RACK"
+            make -j2
+            endGroup
+            startGroup "Build and verify DeepSpec"
+            make deepspec
+            echo "Checking DeepSpec proof artifacts..."
+            for f in theories/VSTBridge.vo theories/ITreeBridge.vo \
+                     deepspec/DeepSpecVST.vo deepspec/DeepSpecITree.vo \
+                     deepspec/ConopsITree.vo deepspec/verif_max.vo; do
+              if [ -f "$f" ]; then
+                echo "  PASS  $f"
+              else
+                echo "  FAIL  $f not produced"
+                exit 1
+              fi
+            done
+            endGroup
+
+  windows:
+    runs-on: windows-latest
+    needs: build
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: '4.14'
+
+      - name: Install Rocq
+        run: opam install rocq-prover.9.0.0 -y
+
+      - name: Build Rocq
+        run: |
+          opam exec -- rocq makefile -f _CoqProject -o Makefile.coq
+          opam exec -- make -f Makefile.coq -j2
+
+      - name: Build and run OCaml tests
+        run: |
+          opam exec -- make ocaml
+          opam exec -- ./test_rack.exe
+          opam exec -- ./test_rack_prop.exe
+          opam exec -- ./test_rack_extended.exe

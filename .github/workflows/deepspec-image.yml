@@ -1,0 +1,30 @@
+name: Build DeepSpec Image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'deepspec/Dockerfile'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: deepspec
+          push: true
+          tags: ghcr.io/charlescnorton/rack-deepspec:latest

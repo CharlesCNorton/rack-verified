@@ -1,0 +1,34 @@
+-R theories RACK
+-arg -w
+-arg -notation-overridden,-redundant-canonical-projection,-future-coercion-class-field
+theories/Types.v
+theories/Graph.v
+theories/WellFormedness.v
+theories/TopoSort.v
+theories/Diagnostics.v
+theories/ValidatorRegistry.v
+theories/Core.v
+theories/Main.v
+theories/Reflect.v
+theories/Json.v
+theories/Dot.v
+theories/SignedBlob.v
+theories/ExportUtil.v
+theories/Sacm.v
+theories/Export.v
+theories/Notation.v
+theories/EvidenceClass.v
+theories/ProofIdentity.v
+theories/Entailment.v
+theories/Trace.v
+theories/Delta.v
+theories/Incremental.v
+theories/ProductLine.v
+theories/Serialize.v
+theories/Bridge.v
+theories/Conops.v
+theories/CaseStudy.v
+theories/ConopsExample.v
+theories/Example.v
+theories/VSTBridge.v
+theories/ITreeBridge.v
