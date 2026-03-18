@@ -1,5 +1,5 @@
 (* ------------------------------------------------------------------ *)
-(* JSON export                                                          *)
+(* JSON and DOT export                                                  *)
 (* ------------------------------------------------------------------ *)
 
 From RACK Require Import Core.
@@ -11,12 +11,58 @@ Require Import Stdlib.Arith.PeanoNat.
 Import ListNotations.
 Open Scope string_scope.
 
+(* ------------------------------------------------------------------ *)
+(* Character constants                                                  *)
+(* ------------------------------------------------------------------ *)
+
 (* ASCII 34 = double-quote. *)
 Definition dquote_char : ascii :=
   Ascii false true false false false true false false.
 Definition dquote : string := String dquote_char EmptyString.
 
-(* Minimal JSON AST. *)
+(* ASCII 92 = backslash. *)
+Definition backslash_char : ascii :=
+  Ascii false false true true true false true false.
+
+(* ASCII 32 = space. *)
+Definition space_char : ascii :=
+  Ascii false false false false false true false false.
+
+(* ASCII 10 = newline. *)
+Definition nl_char : ascii :=
+  Ascii false true false true false false false false.
+Definition nl : string := String nl_char EmptyString.
+
+(* ------------------------------------------------------------------ *)
+(* JSON string escaping                                                 *)
+(* ------------------------------------------------------------------ *)
+
+(* Self-contained ascii equality — no stdlib Ascii.eqb dependency. *)
+Definition ascii_eqb (a b : ascii) : bool :=
+  match a, b with
+  | Ascii a0 a1 a2 a3 a4 a5 a6 a7,
+    Ascii b0 b1 b2 b3 b4 b5 b6 b7 =>
+    Bool.eqb a0 b0 && Bool.eqb a1 b1 && Bool.eqb a2 b2 && Bool.eqb a3 b3 &&
+    Bool.eqb a4 b4 && Bool.eqb a5 b5 && Bool.eqb a6 b6 && Bool.eqb a7 b7
+  end.
+
+(* Escape characters that are special in JSON strings: " and \. *)
+Fixpoint escape_json_chars (s : string) : string :=
+  match s with
+  | EmptyString => EmptyString
+  | String c rest =>
+    if ascii_eqb c dquote_char then
+      String backslash_char (String dquote_char (escape_json_chars rest))
+    else if ascii_eqb c backslash_char then
+      String backslash_char (String backslash_char (escape_json_chars rest))
+    else
+      String c (escape_json_chars rest)
+  end.
+
+(* ------------------------------------------------------------------ *)
+(* Minimal JSON AST                                                     *)
+(* ------------------------------------------------------------------ *)
+
 Inductive Json : Type :=
   | JNull   : Json
   | JBool   : bool -> Json
@@ -25,7 +71,9 @@ Inductive Json : Type :=
   | JArr    : list Json -> Json
   | JObj    : list (string * Json) -> Json.
 
-(* — Serialization to JSON AST — *)
+(* ------------------------------------------------------------------ *)
+(* Serialization to JSON AST                                            *)
+(* ------------------------------------------------------------------ *)
 
 Definition node_kind_to_json (nk : NodeKind) : Json :=
   JStr match nk with
@@ -45,6 +93,7 @@ Definition evidence_to_json (e : Evidence) : Json :=
 Definition node_to_json (n : Node) : Json :=
   JObj [("id", JStr n.(node_id));
         ("kind", node_kind_to_json n.(node_kind));
+        ("claim", JStr n.(node_claim_text));
         ("evidence",
           match n.(node_evidence) with
           | Some e => evidence_to_json e
@@ -67,7 +116,9 @@ Definition assurance_case_to_json (ac : AssuranceCase) : Json :=
         ("nodes", JArr (map node_to_json ac.(ac_nodes)));
         ("links", JArr (map link_to_json ac.(ac_links)))].
 
-(* — JSON text renderer — *)
+(* ------------------------------------------------------------------ *)
+(* JSON text renderers                                                  *)
+(* ------------------------------------------------------------------ *)
 
 Definition digit_to_string (n : nat) : string :=
   match n with
@@ -102,8 +153,9 @@ Fixpoint join_strings (sep : string) (ss : list string) : string :=
   end.
 
 Definition json_quote (s : string) : string :=
-  String.append dquote (String.append s dquote).
+  String.append dquote (String.append (escape_json_chars s) dquote).
 
+(* Compact single-line renderer. *)
 Fixpoint render_json (j : Json) : string :=
   let fix render_list (js : list Json) : list string :=
     match js with
@@ -135,13 +187,73 @@ Definition render_assurance_case (ac : AssuranceCase) : string :=
   render_json (assurance_case_to_json ac).
 
 (* ------------------------------------------------------------------ *)
-(* DOT export                                                           *)
+(* Pretty-printed JSON renderer                                         *)
 (* ------------------------------------------------------------------ *)
 
-(* ASCII 10 = newline. *)
-Definition nl_char : ascii :=
-  Ascii false true false true false false false false.
-Definition nl : string := String nl_char EmptyString.
+Fixpoint indent (n : nat) : string :=
+  match n with
+  | 0 => EmptyString
+  | S n' => String space_char (String space_char (indent n'))
+  end.
+
+Fixpoint render_json_pretty_go (depth : nat) (j : Json) : string :=
+  let ind := indent depth in
+  let ind1 := indent (S depth) in
+  let fix render_list_pretty (js : list Json) : list string :=
+    match js with
+    | [] => []
+    | j' :: rest =>
+        String.append ind1 (render_json_pretty_go (S depth) j')
+        :: render_list_pretty rest
+    end
+  in
+  let fix render_kvs_pretty (kvs : list (string * Json)) : list string :=
+    match kvs with
+    | [] => []
+    | (k, v) :: rest =>
+        String.append ind1
+          (String.append (json_quote k)
+            (String.append ": " (render_json_pretty_go (S depth) v)))
+        :: render_kvs_pretty rest
+    end
+  in
+  match j with
+  | JNull => "null"
+  | JBool true => "true"
+  | JBool false => "false"
+  | JStr s => json_quote s
+  | JNum n => nat_to_string n
+  | JArr elems =>
+    let items := render_list_pretty elems in
+    match items with
+    | [] => "[]"
+    | _ =>
+      String.append "["
+        (String.append nl
+          (String.append (join_strings (String.append "," nl) items)
+            (String.append nl (String.append ind "]"))))
+    end
+  | JObj kvs =>
+    let entries := render_kvs_pretty kvs in
+    match entries with
+    | [] => "{}"
+    | _ =>
+      String.append "{"
+        (String.append nl
+          (String.append (join_strings (String.append "," nl) entries)
+            (String.append nl (String.append ind "}"))))
+    end
+  end.
+
+Definition render_json_pretty (j : Json) : string :=
+  render_json_pretty_go 0 j.
+
+Definition render_assurance_case_pretty (ac : AssuranceCase) : string :=
+  render_json_pretty (assurance_case_to_json ac).
+
+(* ------------------------------------------------------------------ *)
+(* DOT export                                                           *)
+(* ------------------------------------------------------------------ *)
 
 Definition concat_strings (ss : list string) : string :=
   fold_right String.append EmptyString ss.
@@ -190,9 +302,6 @@ Record SignedBlob : Type := {
 Definition signed_blob_valid (sb : SignedBlob) : Prop :=
   sb.(sb_verify) sb.(sb_payload) sb.(sb_signature) = true.
 
-(* Wrap a signed blob as a Certificate evidence node.                  *)
-(* The verifier closes over the stored signature so the Evidence       *)
-(* validator only needs the payload.                                   *)
 Definition signed_to_evidence (sb : SignedBlob) : Evidence :=
   Certificate sb.(sb_payload)
               (fun p => sb.(sb_verify) p sb.(sb_signature)).
