@@ -565,3 +565,217 @@ Fixpoint render_json (j : Json) : string :=
 
 Definition render_assurance_case (ac : AssuranceCase) : string :=
   render_json (assurance_case_to_json ac).
+
+(* ------------------------------------------------------------------ *)
+(* 9. DOT export                                                        *)
+(* ------------------------------------------------------------------ *)
+
+(* ASCII 10 = newline. *)
+Definition nl_char : ascii :=
+  Ascii false true false true false false false false.
+Definition nl : string := String nl_char EmptyString.
+
+Definition concat_strings (ss : list string) : string :=
+  fold_right String.append EmptyString ss.
+
+Definition node_kind_shape (nk : NodeKind) : string :=
+  match nk with
+  | Goal => "box" | Strategy => "parallelogram" | Solution => "ellipse"
+  | Context => "note" | Assumption => "diamond" | Justification => "hexagon"
+  end.
+
+Definition render_dot_node (n : Node) : string :=
+  "  " ++ json_quote n.(node_id) ++ " [label=" ++ json_quote n.(node_id)
+       ++ ",shape=" ++ node_kind_shape n.(node_kind) ++ "];" ++ nl.
+
+Definition render_dot_edge (l : Link) : string :=
+  "  " ++ json_quote l.(link_from) ++ " -> " ++ json_quote l.(link_to)
+       ++ match l.(link_kind) with
+          | SupportedBy => " [style=solid];"
+          | InContextOf  => " [style=dashed];"
+          end ++ nl.
+
+Definition render_dot (ac : AssuranceCase) : string :=
+  "digraph assurance_case {" ++ nl
+    ++ concat_strings (map render_dot_node ac.(ac_nodes))
+    ++ concat_strings (map render_dot_edge ac.(ac_links))
+    ++ "}" ++ nl.
+
+(* ------------------------------------------------------------------ *)
+(* 10. Signed evidence blobs                                            *)
+(* ------------------------------------------------------------------ *)
+
+Record SignedBlob : Type := {
+  sb_payload   : string;
+  sb_signature : string;
+  sb_verify    : string -> string -> bool;
+}.
+
+Definition signed_blob_valid (sb : SignedBlob) : Prop :=
+  sb.(sb_verify) sb.(sb_payload) sb.(sb_signature) = true.
+
+(* Wrap a signed blob as a Certificate evidence node.                  *)
+(* The verifier closes over the stored signature so the Evidence       *)
+(* validator only needs the payload.                                   *)
+Definition signed_to_evidence (sb : SignedBlob) : Evidence :=
+  Certificate sb.(sb_payload)
+              (fun p => sb.(sb_verify) p sb.(sb_signature)).
+
+Lemma signed_evidence_valid : forall sb n,
+    signed_blob_valid sb ->
+    evidence_valid n (signed_to_evidence sb).
+Proof. intros sb n H. exact H. Qed.
+
+Definition signed_to_json (sb : SignedBlob) : Json :=
+  JObj [("type", JStr "SignedBlob");
+        ("payload", JStr sb.(sb_payload));
+        ("signature", JStr sb.(sb_signature))].
+
+(* ------------------------------------------------------------------ *)
+(* 11. Example: requirement -> theorem -> evidence                      *)
+(* ------------------------------------------------------------------ *)
+
+(* Claim: 2 + 2 = 4, witnessed by a Rocq proof term. *)
+Definition ex_claim : Prop := 2 + 2 = 4.
+Definition ex_proof : ex_claim := eq_refl.
+
+Definition ex_goal : Node := {|
+  node_id := "G1";
+  node_kind := Goal;
+  node_claim := ex_claim;
+  node_evidence := None;
+|}.
+
+Definition ex_solution : Node := {|
+  node_id := "E1";
+  node_kind := Solution;
+  node_claim := ex_claim;
+  node_evidence := Some (ProofTerm ex_claim ex_proof);
+|}.
+
+Definition ex_link : Link := {|
+  link_kind := SupportedBy;
+  link_from := "G1";
+  link_to := "E1";
+|}.
+
+Definition ex_ac : AssuranceCase := {|
+  ac_nodes := [ex_goal; ex_solution];
+  ac_links := [ex_link];
+  ac_top := "G1";
+|}.
+
+(* — Helpers for the concrete example — *)
+
+Lemma ex_children_equiv : forall u,
+    supportedby_children ex_ac u =
+    if String.eqb "G1" u then ["E1"] else [].
+Proof.
+  intro u. unfold supportedby_children, ex_ac, ex_link.
+  cbn -[String.eqb]. destruct (String.eqb "G1" u); reflexivity.
+Qed.
+
+Lemma ex_find_node_equiv : forall id,
+    find_node ex_ac id =
+    if String.eqb "G1" id then Some ex_goal
+    else if String.eqb "E1" id then Some ex_solution
+    else None.
+Proof.
+  intro id. unfold find_node, ex_ac.
+  cbn -[String.eqb]. destruct (String.eqb "G1" id); [reflexivity |].
+  cbn -[String.eqb]. destruct (String.eqb "E1" id); reflexivity.
+Qed.
+
+Definition ex_rank (id : Id) : nat :=
+  if String.eqb "G1" id then 1 else 0.
+
+Lemma ex_rank_decreases : forall u v,
+    Reaches ex_ac u v -> ex_rank v < ex_rank u.
+Proof.
+  intros u v H. induction H as [u v Hstep | u w v H1 IH1 H2 IH2].
+  - rewrite ex_children_equiv in Hstep. unfold ex_rank.
+    destruct (String.eqb "G1" u) eqn:Heq.
+    + destruct Hstep as [<- | []]. simpl. apply Nat.lt_0_succ.
+    + destruct Hstep.
+  - exact (Nat.lt_trans _ _ _ IH2 IH1).
+Qed.
+
+Lemma ex_acyclic : Acyclic ex_ac.
+Proof.
+  intros id H.
+  exact (Nat.lt_irrefl _ (ex_rank_decreases id id H)).
+Qed.
+
+Lemma ex_no_reach_from_E1 : forall v, ~ Reaches ex_ac "E1" v.
+Proof.
+  intros v H.
+  exact (Nat.nlt_0_r _ (ex_rank_decreases _ _ H)).
+Qed.
+
+Lemma ex_reaches_from_G1 : forall u v,
+    Reaches ex_ac u v -> u = "G1" -> v = "E1".
+Proof.
+  intros u v H. induction H as [u v Hstep | u w v H1 IH1 H2 IH2]; intro Heq; subst.
+  - rewrite ex_children_equiv in Hstep. simpl in Hstep.
+    destruct Hstep as [<- | []]. reflexivity.
+  - assert (w = "E1") by exact (IH1 eq_refl). subst w.
+    exfalso. exact (ex_no_reach_from_E1 v H2).
+Qed.
+
+(* — Well-formedness proof — *)
+
+Lemma ex_top_is_goal : top_is_goal ex_ac.
+Proof. exists ex_goal. split; reflexivity. Qed.
+
+Lemma ex_no_dangle : no_dangling_links ex_ac.
+Proof.
+  intros l Hin. destruct Hin as [<- | []].
+  split; [exists ex_goal | exists ex_solution]; reflexivity.
+Qed.
+
+Lemma ex_discharged : all_reachable_discharged ex_ac.
+Proof.
+  intros id Hreach.
+  assert (Hid: id = "G1" \/ id = "E1").
+  { destruct Hreach as [-> | H].
+    - left; reflexivity.
+    - right; exact (ex_reaches_from_G1 _ _ H eq_refl). }
+  destruct Hid as [-> | ->]; vm_compute.
+  - discriminate.
+  - eexists; split; reflexivity.
+Qed.
+
+Lemma ex_entailment : forall id n,
+    find_node ex_ac id = Some n ->
+    (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+    (let kids := supportedby_children ex_ac id in
+     let child_claims :=
+       flat_map (fun kid =>
+         match find_node ex_ac kid with
+         | Some cn => [cn.(node_claim)]
+         | None     => []
+         end) kids
+     in fold_right and True child_claims -> n.(node_claim)).
+Proof.
+  intros id n Hfind Hkind.
+  rewrite ex_find_node_equiv in Hfind.
+  destruct (String.eqb "G1" id) eqn:Heq1.
+  - injection Hfind as <-. vm_compute. tauto.
+  - destruct (String.eqb "E1" id) eqn:Heq2.
+    + injection Hfind as <-. destruct Hkind as [H | H]; discriminate.
+    + discriminate.
+Qed.
+
+Definition ex_wf : WellFormed ex_ac :=
+  {| wf_top := ex_top_is_goal;
+     wf_acyclic := ex_acyclic;
+     wf_discharged := ex_discharged;
+     wf_no_dangle := ex_no_dangle;
+     wf_entailment := ex_entailment |}.
+
+Theorem ex_supported : SupportTree ex_ac "G1".
+Proof. exact (assurance_case_supported ex_ac ex_wf). Qed.
+
+(* The example renders to JSON and DOT: *)
+(* Eval vm_compute in render_assurance_case ex_ac. *)
+(* Eval vm_compute in render_dot ex_ac.             *)
