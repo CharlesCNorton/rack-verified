@@ -2186,17 +2186,3 @@ Proof.
   reflexivity.
 Qed.
 
-(** Self-contained completeness: no topo premise.
-    Uses [topo_sort_complete] to derive the topo order internally.
-    Requires [Acyclic ac], [NoDup], and [no_dangling_links]. *)
-Theorem diagnose_structural_complete_self : forall ac,
-    diagnose_structural ac = [] ->
-    Acyclic ac ->
-    NoDup (map node_id ac.(ac_nodes)) ->
-    no_dangling_links ac ->
-    structural_checks ac = true.
-Proof.
-  intros ac Hdiag Hacyc Hnd Hndl.
-  apply diagnose_structural_complete; [exact Hdiag |].
-  exact (topo_sort_complete ac Hacyc Hnd Hndl).
-Qed.

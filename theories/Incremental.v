@@ -400,7 +400,8 @@ Proof.
       intros id' n' Hf; simpl in Hf; discriminate.
   - inversion Hord as [|? ? ? ? Hl Hr Hkl Hkr]; subst.
     simpl. destruct (String.compare id k) eqn:Hcmp.
-    + constructor; assumption.
+    + apply String.compare_eq_iff in Hcmp. subst.
+      constructor; assumption.
     + constructor; [exact (IHl Hl) | exact Hr |
         exact (bst_insert_keys_lt id n l k Hkl Hcmp) | exact Hkr].
     + constructor; [exact Hl | exact (IHr Hr) |
@@ -504,38 +505,35 @@ Fixpoint avl_elements (t : NodeAVL) : list (Id * Node) :=
   | AVLNode l k v r _ => avl_elements l ++ [(k, v)] ++ avl_elements r
   end.
 
-Lemma avl_rot_right_elements : forall t,
-    avl_elements (avl_rot_right t) = avl_elements t.
-Proof.
-  intros [|[|ll lk lv lr lh] k v r h]; try reflexivity.
-  simpl. rewrite !app_assoc. reflexivity.
-Qed.
+Arguments avl_elements : simpl never.
+Arguments avl_height : simpl never.
 
-Lemma avl_rot_left_elements : forall t,
-    avl_elements (avl_rot_left t) = avl_elements t.
-Proof.
-  intros [|l k v [|rl rk rv rr rh] h]; try reflexivity.
-  simpl. rewrite !app_assoc. reflexivity.
-Qed.
+Lemma avl_elements_node : forall l k v r h,
+    avl_elements (AVLNode l k v r h) =
+    avl_elements l ++ [(k, v)] ++ avl_elements r.
+Proof. reflexivity. Qed.
+
+Lemma avl_elements_leaf : avl_elements AVLLeaf = [].
+Proof. reflexivity. Qed.
 
 Lemma avl_balance_elements : forall l k v r,
     avl_elements (avl_balance l k v r) =
     avl_elements l ++ [(k, v)] ++ avl_elements r.
 Proof.
-  intros l k v r. unfold avl_balance.
-  destruct (Nat.leb (avl_height r + 2) (avl_height l)).
+  intros l k v r. unfold avl_balance, avl_rot_right, avl_rot_left, avl_mk.
+  destruct (Nat.leb (avl_height r + 2) (avl_height l)) eqn:E1.
   - destruct l as [|ll lk lv lr lh]; [reflexivity |].
-    destruct (Nat.leb (avl_height lr) (avl_height ll));
-      rewrite avl_rot_right_elements; simpl;
-      try rewrite avl_rot_left_elements; simpl;
-      rewrite !app_assoc; reflexivity.
-  - destruct (Nat.leb (avl_height l + 2) (avl_height r)).
+    destruct (Nat.leb (avl_height lr) (avl_height ll)) eqn:E2.
+    + rewrite !avl_elements_node; rewrite !app_assoc; reflexivity.
+    + destruct lr as [|lrl lrk lrv lrr lrh];
+        rewrite !avl_elements_node; rewrite !app_assoc; reflexivity.
+  - destruct (Nat.leb (avl_height l + 2) (avl_height r)) eqn:E3.
     + destruct r as [|rl rk rv rr rh]; [reflexivity |].
-      destruct (Nat.leb (avl_height rl) (avl_height rr));
-        rewrite avl_rot_left_elements; simpl;
-        try rewrite avl_rot_right_elements; simpl;
-        rewrite !app_assoc; reflexivity.
-    + reflexivity.
+      destruct (Nat.leb (avl_height rl) (avl_height rr)) eqn:E4.
+      * rewrite !avl_elements_node; rewrite !app_assoc; reflexivity.
+      * destruct rl as [|rll rlk rlv rlr rlh];
+          rewrite !avl_elements_node; rewrite !app_assoc; reflexivity.
+    + rewrite avl_elements_node. reflexivity.
 Qed.
 
 (* --- AVL ordering invariant --- *)

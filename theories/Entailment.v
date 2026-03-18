@@ -285,7 +285,6 @@ Global Hint Resolve entails_conj4 : rack_entail.
 Global Hint Resolve entails_conj5 : rack_entail.
 Global Hint Resolve entails_true : rack_entail.
 Global Hint Resolve entails_conj_all : rack_entail.
-Global Hint Resolve entails_weaken : rack_entail.
 
 (* ================================================================== *)
 (* Reflection-based partial decision procedure                        *)

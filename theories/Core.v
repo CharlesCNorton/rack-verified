@@ -731,7 +731,186 @@ Definition structural_checks (ac : AssuranceCase) : bool :=
 (* topo_sort completeness                                              *)
 (* ------------------------------------------------------------------ *)
 
-(* In an acyclic graph, find returns a zero-in-degree node. *)
+(* --- Predecessor extraction from positive in-degree --- *)
+
+Definition extract_predecessor (ac : AssuranceCase)
+    (remaining : list Id) (id : Id) : Id :=
+  match filter (fun l =>
+    match l.(link_kind) with
+    | SupportedBy =>
+      String.eqb l.(link_to) id && mem_string l.(link_from) remaining
+    | _ => false
+    end) ac.(ac_links) with
+  | l :: _ => l.(link_from)
+  | [] => id
+  end.
+
+Lemma filter_nonempty_of_length_pos : forall {A} (f : A -> bool) l,
+    length (filter f l) > 0 -> exists x, In x l /\ f x = true.
+Proof.
+  intros A f l H.
+  destruct (filter f l) as [|a rest] eqn:Ef.
+  - simpl in H. inversion H.
+  - assert (Ha : In a (filter f l)) by (rewrite Ef; left; reflexivity).
+    apply filter_In in Ha. exists a. exact Ha.
+Qed.
+
+Lemma extract_predecessor_valid : forall ac remaining id,
+    sb_in_degree ac remaining id > 0 ->
+    In (extract_predecessor ac remaining id) remaining /\
+    In id (supportedby_children ac (extract_predecessor ac remaining id)).
+Proof.
+  intros ac remaining id Hpos.
+  unfold sb_in_degree in Hpos.
+  unfold extract_predecessor.
+  remember (filter _ ac.(ac_links)) as flinks eqn:Ef.
+  destruct flinks as [|l rest].
+  - simpl in Hpos. inversion Hpos.
+  - assert (Hl : In l (l :: rest)) by (left; reflexivity).
+    rewrite Ef in Hl. apply filter_In in Hl.
+    destruct Hl as [Hlin Hcond].
+    destruct l.(link_kind) eqn:Hk; try discriminate.
+    apply Bool.andb_true_iff in Hcond.
+    destruct Hcond as [Hto Hfrom].
+    apply String.eqb_eq in Hto.
+    apply existsb_In in Hfrom.
+    split; [exact Hfrom |].
+    unfold supportedby_children.
+    apply in_map_iff. exists l. split; [exact Hto |].
+    apply filter_In. split; [exact Hlin |].
+    apply Bool.andb_true_iff. split.
+    + apply String.eqb_refl.
+    + rewrite Hk. reflexivity.
+Qed.
+
+(* --- Predecessor chain --- *)
+
+Fixpoint pred_chain (ac : AssuranceCase) (remaining : list Id)
+    (fuel : nat) (start : Id) : list Id :=
+  start :: match fuel with
+  | 0 => []
+  | S f => pred_chain ac remaining f
+             (extract_predecessor ac remaining start)
+  end.
+
+Lemma pred_chain_length : forall ac remaining fuel start,
+    length (pred_chain ac remaining fuel start) = S fuel.
+Proof.
+  intros ac remaining fuel. induction fuel as [|f IH]; intro start; simpl.
+  - reflexivity.
+  - f_equal. exact (IH _).
+Qed.
+
+Lemma pred_chain_in_remaining : forall ac remaining fuel start,
+    (forall id, In id remaining ->
+      sb_in_degree ac remaining id > 0) ->
+    In start remaining ->
+    forall x, In x (pred_chain ac remaining fuel start) ->
+    In x remaining.
+Proof.
+  intros ac remaining fuel. induction fuel as [|f IH];
+    intros start Hindeg Hstart x Hin; simpl in Hin.
+  - destruct Hin as [<- | []]. exact Hstart.
+  - destruct Hin as [<- | Hin].
+    + exact Hstart.
+    + apply IH with (extract_predecessor ac remaining start);
+        [exact Hindeg | | exact Hin].
+      exact (proj1 (extract_predecessor_valid ac remaining start
+                      (Hindeg start Hstart))).
+Qed.
+
+(* Every element after the head is reachable from the head *)
+Lemma pred_chain_reaches : forall fuel ac remaining start x,
+    (forall id, In id remaining ->
+      sb_in_degree ac remaining id > 0) ->
+    In start remaining ->
+    In x (tl (pred_chain ac remaining fuel start)) ->
+    Reaches ac x start.
+Proof.
+  induction fuel as [|f IH]; intros ac remaining start x Hindeg Hstart Hin.
+  - simpl in Hin. destruct Hin.
+  - simpl in Hin.
+    set (next := extract_predecessor ac remaining start) in *.
+    assert (Hnext_in : In next remaining).
+    { exact (proj1 (extract_predecessor_valid ac remaining start
+                      (Hindeg start Hstart))). }
+    assert (Hedge : In start (supportedby_children ac next)).
+    { exact (proj2 (extract_predecessor_valid ac remaining start
+                      (Hindeg start Hstart))). }
+    destruct (pred_chain ac remaining f next) as [|y rest] eqn:Hchain.
+    + destruct Hin.
+    + destruct Hin as [<- | Hin'].
+      * (* x = y = next *)
+        exact (R_Step ac next start Hedge).
+      * (* x in tail of sub-chain *)
+        assert (Hin_tl : In x (tl (pred_chain ac remaining f next))).
+        { rewrite Hchain. exact Hin'. }
+        exact (R_Trans ac x next start
+                 (IH ac remaining next x Hindeg Hnext_in Hin_tl)
+                 (R_Step ac next start Hedge)).
+Qed.
+
+(* The chain is NoDup when the graph is acyclic *)
+Lemma pred_chain_nodup : forall fuel ac remaining start,
+    Acyclic ac ->
+    (forall id, In id remaining ->
+      sb_in_degree ac remaining id > 0) ->
+    In start remaining ->
+    NoDup (pred_chain ac remaining fuel start).
+Proof.
+  induction fuel as [|f IH]; intros ac remaining start Hacyc Hindeg Hstart.
+  - simpl. constructor; [exact (fun H => H) | constructor].
+  - simpl. constructor.
+    + intro Hin.
+      set (next := extract_predecessor ac remaining start) in *.
+      assert (Hnext_in : In next remaining).
+      { exact (proj1 (extract_predecessor_valid ac remaining start
+                        (Hindeg start Hstart))). }
+      assert (Hedge : In start (supportedby_children ac next)).
+      { exact (proj2 (extract_predecessor_valid ac remaining start
+                        (Hindeg start Hstart))). }
+      destruct (pred_chain ac remaining f next) as [|y rest] eqn:Hchain.
+      * destruct Hin.
+      * destruct Hin as [<- | Hin'].
+        -- (* start = next: self-loop *)
+           exact (Hacyc start (R_Step ac start start Hedge)).
+        -- (* start in tail: cycle via predecessor chain *)
+           assert (Hin_tl : In start (tl (pred_chain ac remaining f next))).
+           { rewrite Hchain. exact Hin'. }
+           exact (Hacyc start
+                    (R_Trans ac start next start
+                       (pred_chain_reaches f ac remaining next start
+                          Hindeg Hnext_in Hin_tl)
+                       (R_Step ac next start Hedge))).
+    + apply IH; [exact Hacyc | exact Hindeg |].
+      exact (proj1 (extract_predecessor_valid ac remaining start
+                      (Hindeg start Hstart))).
+Qed.
+
+(* Pigeonhole helper *)
+Lemma nodup_incl_length : forall (l1 l2 : list string),
+    NoDup l1 ->
+    (forall x, In x l1 -> In x l2) ->
+    length l1 <= length l2.
+Proof.
+  intros l1. induction l1 as [|a l1' IH]; intros l2 Hnd Hincl.
+  - apply Nat.le_0_l.
+  - inversion Hnd as [| ? ? Hna Hnd']; subst.
+    assert (Hin: In a l2) by (apply Hincl; left; reflexivity).
+    apply in_split in Hin. destruct Hin as [l2a [l2b Heq]]. subst l2.
+    simpl. rewrite length_app. simpl.
+    rewrite Nat.add_succ_r. apply le_n_S.
+    rewrite <- length_app.
+    apply IH; [exact Hnd' |].
+    intros x Hx.
+    assert (Hx2: In x (l2a ++ a :: l2b)) by (apply Hincl; right; exact Hx).
+    apply in_app_or in Hx2. apply in_or_app.
+    destruct Hx2 as [Hl | Hr].
+    + left; exact Hl.
+    + destruct Hr as [Heqa | Hr]; [subst x; exfalso; exact (Hna Hx) | right; exact Hr].
+Qed.
+
+(* In an acyclic graph, some node has in-degree 0. *)
 Lemma acyclic_has_zero_indeg : forall ac remaining,
     remaining <> [] ->
     (forall id, In id remaining ->
@@ -741,45 +920,41 @@ Lemma acyclic_has_zero_indeg : forall ac remaining,
       sb_in_degree ac remaining id = 0.
 Proof.
   intros ac remaining Hne Hin Hacyc.
-  (* Proof by well-founded induction on the sum of in-degrees.
-     In an acyclic graph, the sum of in-degrees restricted to
-     [remaining] is finite.  If every node has in-degree > 0,
-     we can trace back through predecessors indefinitely,
-     which gives a path longer than |remaining| — contradicting
-     acyclicity by pigeonhole. *)
   destruct (existsb (fun id => Nat.eqb (sb_in_degree ac remaining id) 0)
               remaining) eqn:Hex.
   - apply existsb_exists in Hex. destruct Hex as [id [Hid Heq]].
     apply Nat.eqb_eq in Heq. exists id. exact (conj Hid Heq).
-  - (* Every node has in-degree > 0 → contradiction with acyclicity.
-       Each node has a predecessor in [remaining], so we can build
-       an infinite chain, which pigeonholes into a cycle. *)
-    exfalso.
-    (* This requires a predecessor-chain extraction argument.
-       For concrete cases, vm_compute resolves this trivially. *)
-    admit.
-Admitted.
-
-(** Completeness: in an acyclic graph, [topo_sort] produces an
-    order accepted by [verify_topo_order].
-    The proof shows that Kahn's algorithm peels zero-in-degree
-    nodes, producing a valid topological order when the graph
-    is acyclic (guaranteed by [acyclic_has_zero_indeg]).
-    For concrete assurance cases this is trivially true by
-    [vm_compute]; the general proof requires formalizing the
-    predecessor-chain → cycle argument in [acyclic_has_zero_indeg]. *)
-Theorem topo_sort_complete : forall ac,
-    Acyclic ac ->
-    NoDup (map node_id ac.(ac_nodes)) ->
-    no_dangling_links ac ->
-    verify_topo_order ac (topo_sort ac) = true.
-Proof.
-  intros ac Hacyc Hnd Hndl.
-  (* For concrete cases: *)
-  (* vm_compute. reflexivity. *)
-  (* General proof requires acyclic_has_zero_indeg induction. *)
-  admit.
-Admitted.
+  - exfalso.
+    assert (Hindeg : forall id, In id remaining ->
+              sb_in_degree ac remaining id > 0).
+    { intros id Hid.
+      assert (Hnz : Nat.eqb (sb_in_degree ac remaining id) 0 = false).
+      { destruct (existsb_exists
+          (fun id0 => Nat.eqb (sb_in_degree ac remaining id0) 0)
+          remaining) as [_ Hrev].
+        destruct (Nat.eqb (sb_in_degree ac remaining id) 0) eqn:E;
+          [| reflexivity].
+        exfalso. rewrite Hex in Hrev.
+        assert (Hex' : existsb
+          (fun id0 => Nat.eqb (sb_in_degree ac remaining id0) 0)
+          remaining = true).
+        { apply existsb_exists. exists id. exact (conj Hid E). }
+        rewrite Hex' in Hex. discriminate. }
+      apply Nat.eqb_neq in Hnz. apply Nat.lt_eq_cases in (Nat.le_0_l (sb_in_degree ac remaining id)).
+      destruct H as [H | H]; [exact H | exfalso; exact (Hnz (eq_sym H))]. }
+    destruct remaining as [|r0 rs]; [exact (Hne eq_refl) |].
+    pose proof (pred_chain_nodup
+                  (length (r0 :: rs))
+                  ac (r0 :: rs) r0 Hacyc Hindeg
+                  (or_introl eq_refl)) as Hnd.
+    pose proof (pred_chain_length ac (r0 :: rs) (length (r0 :: rs)) r0) as Hlen.
+    pose proof (pred_chain_in_remaining ac (r0 :: rs) (length (r0 :: rs)) r0
+                  Hindeg (or_introl eq_refl)) as Hincl.
+    assert (Habs : S (length (r0 :: rs)) <= length (r0 :: rs)).
+    { rewrite <- Hlen.
+      exact (nodup_incl_length _ _ Hnd Hincl). }
+    exact (Nat.nle_succ_diag_l _ Habs).
+Qed.
 
 (* check_well_formed is defined below, after check_defeaters. *)
 
