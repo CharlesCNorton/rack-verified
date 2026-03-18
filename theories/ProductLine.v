@@ -209,16 +209,23 @@ Qed.
 (* Invalidation across variants                                        *)
 (* ================================================================== *)
 
+(** Collect all features mentioned in a feature expression. *)
+Fixpoint feature_expr_mentions (fe : FeatureExpr) : list Feature :=
+  match fe with
+  | FEAtom g => [g]
+  | FETrue | FEFalse => []
+  | FEAnd a b => feature_expr_mentions a ++ feature_expr_mentions b
+  | FEOr a b  => feature_expr_mentions a ++ feature_expr_mentions b
+  | FENot a   => feature_expr_mentions a
+  end.
+
 (** Which variants are affected by adding/removing a feature? *)
 Definition variants_affected_by_feature (plc : ProductLineCase)
     (f : Feature) : list Id :=
   map (fun an => an.(an_node).(node_id))
     (filter (fun an =>
-      (* Node's feature expression mentions f *)
-      match an.(an_feature) with
-      | FEAtom g => String.eqb f g
-      | _ => false
-      end) plc.(plc_nodes)).
+      mem_string f (feature_expr_mentions an.(an_feature)))
+    plc.(plc_nodes)).
 
 (* ================================================================== *)
 (* Lifted cases preserve well-formedness                              *)
