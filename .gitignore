@@ -6,5 +6,6 @@
 .coq-native/
 Makefile.coq
 Makefile.coq.conf
+.Makefile.coq.d
 rack.ml
 rack.mli

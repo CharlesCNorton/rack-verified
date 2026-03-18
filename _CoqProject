@@ -1,2 +1,5 @@
 -R theories RACK
-theories/RACK.v
+theories/Core.v
+theories/Main.v
+theories/Export.v
+theories/Example.v
