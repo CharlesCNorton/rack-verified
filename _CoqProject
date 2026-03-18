@@ -4,6 +4,11 @@
 theories/Core.v
 theories/Main.v
 theories/Reflect.v
+theories/Json.v
+theories/Dot.v
+theories/SignedBlob.v
+theories/ExportUtil.v
+theories/Sacm.v
 theories/Export.v
 theories/Notation.v
 theories/EvidenceClass.v
