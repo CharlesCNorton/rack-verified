@@ -269,6 +269,43 @@ Definition node_weight (n : Node) : option string :=
   | _                 => None
   end.
 
+(* ------------------------------------------------------------------ *)
+(* Undeveloped nodes                                                    *)
+(* ------------------------------------------------------------------ *)
+
+(** A node is undeveloped when its metadata contains [("undeveloped", MVBool true)].
+    Undeveloped nodes are skipped by discharged checks, allowing
+    partial cases to validate without false positives. *)
+Definition node_undeveloped (n : Node) : bool :=
+  match find_metadata "undeveloped" n.(node_metadata) with
+  | Some (MVBool true) => true
+  | _ => false
+  end.
+
+Definition all_developed (ac : AssuranceCase) : bool :=
+  forallb (fun n => negb (node_undeveloped n)) ac.(ac_nodes).
+
+(* ------------------------------------------------------------------ *)
+(* Assumption lifecycle                                                 *)
+(* ------------------------------------------------------------------ *)
+
+(** Assumption lifecycle status, tracked via metadata.
+    [("assumption_status", MVString "invalidated")] marks an
+    Assumption node as invalidated; the support tree is blocked
+    for any path through an invalidated assumption. *)
+Definition assumption_invalidated (n : Node) : bool :=
+  match n.(node_kind) with
+  | Assumption =>
+    match find_metadata "assumption_status" n.(node_metadata) with
+    | Some (MVString s) => String.eqb s "invalidated"
+    | _ => false
+    end
+  | _ => false
+  end.
+
+Definition check_no_invalidated_assumptions (ac : AssuranceCase) : bool :=
+  forallb (fun n => negb (assumption_invalidated n)) ac.(ac_nodes).
+
 Definition solution_discharged (n : Node) : Prop :=
   n.(node_kind) = Solution ->
   exists e,
@@ -902,7 +939,9 @@ Inductive CheckError : Type :=
   | ErrExpiredEvidence  : Id -> string -> CheckError  (* node id, expiry date *)
   | ErrMissingRequiredKey : Id -> string -> CheckError (* node id, key name *)
   | ErrMalformedTimestamp : Id -> string -> CheckError (* node id, bad value *)
-  | ErrUnresolvedDefeater : Id -> Id -> CheckError. (* defeater node, target node *)
+  | ErrUnresolvedDefeater : Id -> Id -> CheckError (* defeater node, target node *)
+  | ErrUndeveloped : Id -> CheckError
+  | ErrInvalidatedAssumption : Id -> CheckError.
 
 Definition diagnose_top (ac : AssuranceCase) : list CheckError :=
   match find_node ac ac.(ac_top) with
@@ -1015,6 +1054,18 @@ Definition diagnose_all (ac : AssuranceCase) : list CheckError :=
   diagnose_context_links ac ++
   diagnose_acyclic ac ++
   diagnose_defeaters ac.
+
+Definition diagnose_undeveloped (ac : AssuranceCase) : list CheckError :=
+  flat_map (fun n =>
+    if node_undeveloped n then [ErrUndeveloped n.(node_id)]
+    else []) ac.(ac_nodes).
+
+Definition diagnose_invalidated_assumptions (ac : AssuranceCase)
+    : list CheckError :=
+  flat_map (fun n =>
+    if assumption_invalidated n
+    then [ErrInvalidatedAssumption n.(node_id)]
+    else []) ac.(ac_nodes).
 
 (** Diagnostic function that mirrors [structural_checks] exactly.
     Uses [check_all_discharged] (all-nodes) rather than

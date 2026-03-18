@@ -1308,6 +1308,10 @@ Definition check_error_to_json (err : CheckError) : Json :=
   | ErrUnresolvedDefeater def tgt =>
       JObj [("error", JStr "UnresolvedDefeater"); ("defeater", JStr def);
             ("target", JStr tgt)]
+  | ErrUndeveloped id =>
+      JObj [("error", JStr "Undeveloped"); ("node", JStr id)]
+  | ErrInvalidatedAssumption id =>
+      JObj [("error", JStr "InvalidatedAssumption"); ("node", JStr id)]
   end.
 
 Definition diagnose_to_json (ac : AssuranceCase) : Json :=
