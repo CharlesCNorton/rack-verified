@@ -160,6 +160,76 @@ Definition check_trace_provenance (tg : TraceGraph) : bool :=
     end) tg.(tg_case).(ac_nodes).
 
 (* ================================================================== *)
+(* Reverse trace lookup                                                *)
+(* ================================================================== *)
+
+(** Given an evidence node, find which requirements it satisfies
+    by following trace links backward. *)
+Definition trace_reverse_lookup (tg : TraceGraph) (evidence_id : Id)
+    : list Id :=
+  map tl_source
+    (filter (fun tl =>
+      TraceLinkKind_eqb tl.(tl_kind) TL_VerifiedBy &&
+      String.eqb tl.(tl_target) evidence_id)
+    tg.(tg_trace_links)).
+
+(** General backward closure: given a node ID, find all requirements
+    reachable by reversing Satisfies/VerifiedBy chains. *)
+Definition trace_requirements_for (tg : TraceGraph) (node_id : Id)
+    : list Id :=
+  let verified_claims :=
+    map tl_source
+      (filter (fun tl =>
+        TraceLinkKind_eqb tl.(tl_kind) TL_VerifiedBy &&
+        String.eqb tl.(tl_target) node_id)
+      tg.(tg_trace_links)) in
+  flat_map (fun claim_id =>
+    map tl_source
+      (filter (fun tl =>
+        TraceLinkKind_eqb tl.(tl_kind) TL_Satisfies &&
+        String.eqb tl.(tl_target) claim_id)
+      tg.(tg_trace_links)))
+  (node_id :: verified_claims).
+
+(* ================================================================== *)
+(* Trace coverage                                                      *)
+(* ================================================================== *)
+
+(** A requirement has complete evidence when there exists a chain
+    Satisfies -> VerifiedBy -> ProducedBy. *)
+Definition requirement_covered (tg : TraceGraph) (rid : RequirementId)
+    : bool :=
+  let claim_targets :=
+    map tl_target
+      (filter (fun tl =>
+        TraceLinkKind_eqb tl.(tl_kind) TL_Satisfies &&
+        String.eqb tl.(tl_source) rid.(req_id))
+      tg.(tg_trace_links)) in
+  let evidence_targets :=
+    flat_map (fun cid =>
+      map tl_target
+        (filter (fun tl =>
+          TraceLinkKind_eqb tl.(tl_kind) TL_VerifiedBy &&
+          String.eqb tl.(tl_source) cid)
+        tg.(tg_trace_links)))
+    claim_targets in
+  existsb (fun eid =>
+    existsb (fun tl =>
+      TraceLinkKind_eqb tl.(tl_kind) TL_ProducedBy &&
+      String.eqb tl.(tl_source) eid)
+    tg.(tg_trace_links))
+  evidence_targets.
+
+(** Check that every requirement has complete evidence chains. *)
+Definition check_trace_complete (tg : TraceGraph) : bool :=
+  forallb (requirement_covered tg) tg.(tg_requirements).
+
+(** Coverage fraction: count of covered requirements / total. *)
+Definition trace_coverage_count (tg : TraceGraph) : nat * nat :=
+  (length (filter (requirement_covered tg) tg.(tg_requirements)),
+   length tg.(tg_requirements)).
+
+(* ================================================================== *)
 (* Invalidation theory                                                 *)
 (* ================================================================== *)
 
