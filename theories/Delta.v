@@ -4,6 +4,7 @@
 (* ------------------------------------------------------------------ *)
 
 From RACK Require Import Core.
+From RACK Require Import Reflect.
 From RACK Require Import Trace.
 Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
@@ -229,6 +230,50 @@ Lemma check_pr_admissible_sound : forall ac delta,
     check_pr_admissible ac delta = true ->
     structural_checks (apply_delta ac delta) = true.
 Proof. intros ac delta H. exact H. Qed.
+
+(** UpdateEvidence preserves find_node for other IDs. *)
+Lemma find_update_other : forall nodes id ev id',
+    String.eqb id id' = false ->
+    find (fun n => String.eqb n.(node_id) id')
+      (map (fun n => if String.eqb n.(node_id) id then
+        {| node_id := n.(node_id); node_kind := n.(node_kind);
+           node_claim_text := n.(node_claim_text);
+           node_evidence := Some ev;
+           node_metadata := n.(node_metadata);
+           node_claim := n.(node_claim) |}
+        else n) nodes) =
+    find (fun n => String.eqb n.(node_id) id') nodes.
+Proof.
+  induction nodes as [|n ns IH]; intros id ev id' Hne; simpl.
+  - reflexivity.
+  - destruct (String.eqb n.(node_id) id) eqn:E.
+    + simpl. apply String.eqb_eq in E. rewrite E, Hne. exact (IH id ev id' Hne).
+    + simpl. destruct (String.eqb n.(node_id) id'); [reflexivity | exact (IH id ev id' Hne)].
+Qed.
+
+Lemma check_pr_admissible_builds : forall ac delta,
+    check_pr_admissible ac delta = true ->
+    (forall id n,
+      find_node (apply_delta ac delta) id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children (apply_delta ac delta) id in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node (apply_delta ac delta) kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    (forall n e,
+      In n (apply_delta ac delta).(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e ->
+      evidence_valid n e) ->
+    WellFormed (apply_delta ac delta).
+Proof.
+  intros ac delta Hcheck Hent Hev.
+  exact (build_well_formed (apply_delta ac delta) Hcheck Hent Hev).
+Qed.
 
 (* ================================================================== *)
 (* Delta composition                                                   *)

@@ -202,6 +202,31 @@ let () =
       (list_of_coq iw.iw_stale_nodes <> [])
   done;
 
+  (* Trace: missing requirement fails check_trace_total *)
+  Printf.printf "[Trace: missing requirement fails total]\n";
+  for _i = 0 to 9 do
+    let ac = gen_well_formed_tree 2 in
+    let tg = { tg_case = ac;
+      tg_requirements = Cons ((coq_of_string "REQ-MISSING"), Nil);
+      tg_artifacts = Nil; tg_commits = Nil;
+      tg_tool_runs = Nil; tg_owners = Nil;
+      tg_trace_links = Nil } in
+    check (Printf.sprintf "trace_neg_total_%d" _i)
+      (not (coq_bool_to_bool (check_trace_total tg)))
+  done;
+
+  (* Trace: missing provenance fails check_trace_provenance *)
+  Printf.printf "[Trace: missing provenance fails]\n";
+  for _i = 0 to 9 do
+    let ac = gen_well_formed_tree 2 in
+    let tg = { tg_case = ac;
+      tg_requirements = Nil; tg_artifacts = Nil;
+      tg_commits = Nil; tg_tool_runs = Nil;
+      tg_owners = Nil; tg_trace_links = Nil } in
+    check (Printf.sprintf "trace_neg_prov_%d" _i)
+      (not (coq_bool_to_bool (check_trace_provenance tg)))
+  done;
+
   (* Summary *)
   Printf.printf "\n=== Results: %d/%d passed ===" !passed !total;
   if !failed > 0 then begin

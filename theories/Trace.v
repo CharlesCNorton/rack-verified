@@ -233,6 +233,15 @@ Definition requirement_covered (tg : TraceGraph) (rid : RequirementId)
 Definition check_trace_complete (tg : TraceGraph) : bool :=
   forallb (requirement_covered tg) tg.(tg_requirements).
 
+Lemma check_trace_complete_sound : forall tg,
+    check_trace_complete tg = true ->
+    forall r, In r tg.(tg_requirements) ->
+    requirement_covered tg r = true.
+Proof.
+  intros tg H r Hin. unfold check_trace_complete in H.
+  apply forallb_forall with (x := r) in H; [exact H | exact Hin].
+Qed.
+
 (** Coverage fraction: count of covered requirements / total. *)
 Definition trace_coverage_count (tg : TraceGraph) : nat * nat :=
   (length (filter (requirement_covered tg) tg.(tg_requirements)),
@@ -413,6 +422,25 @@ Proof.
   - exact Htlin.
   - destruct tl.(tl_kind); try discriminate. reflexivity.
   - exact Hsrc.
+Qed.
+
+(* ================================================================== *)
+(* WellTraced builder from boolean checks                              *)
+(* ================================================================== *)
+
+Lemma build_well_traced : forall tg now,
+    WellFormed tg.(tg_case) ->
+    check_trace_total tg = true ->
+    check_trace_fresh tg now = true ->
+    check_trace_provenance tg = true ->
+    WellTraced tg now.
+Proof.
+  intros tg now Hwf Htot Hfr Hprov.
+  constructor.
+  - exact Hwf.
+  - exact (check_trace_total_correct tg Htot).
+  - exact (check_trace_fresh_correct tg now Hfr).
+  - exact (check_trace_provenance_correct tg Hprov).
 Qed.
 
 (* ================================================================== *)

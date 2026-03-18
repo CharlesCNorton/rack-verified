@@ -323,6 +323,37 @@ Proof.
     + exact Hfe.
 Qed.
 
+Lemma project_preserves_no_dangling : forall plc v,
+    check_annotations_compatible plc v = true ->
+    no_dangling_links (project_variant plc v).
+Proof.
+  intros plc v Hcompat l Hin.
+  unfold project_variant in Hin. simpl in Hin.
+  apply in_map_iff in Hin. destruct Hin as [al [Hal Hfilt]].
+  apply filter_In in Hfilt. destruct Hfilt as [Halin Heval].
+  subst l.
+  destruct (check_annotations_compatible_sound plc v Hcompat al Halin Heval)
+    as [[an_f [Hanf [Hidf Hfef]]] [an_t [Hant [Hidt Hfet]]]].
+  assert (Hfind_from :
+    find_node (project_variant plc v) al.(al_link).(link_from) <> None).
+  { unfold find_node, project_variant. simpl.
+    intro Hnone. apply find_none with (x := an_f.(an_node)) in Hnone.
+    - simpl in Hnone. rewrite Hidf, String.eqb_refl in Hnone. discriminate.
+    - apply in_map_iff. exists an_f. split; [reflexivity |].
+      apply filter_In. exact (conj Hanf Hfef). }
+  assert (Hfind_to :
+    find_node (project_variant plc v) al.(al_link).(link_to) <> None).
+  { unfold find_node, project_variant. simpl.
+    intro Hnone. apply find_none with (x := an_t.(an_node)) in Hnone.
+    - simpl in Hnone. rewrite Hidt, String.eqb_refl in Hnone. discriminate.
+    - apply in_map_iff. exists an_t. split; [reflexivity |].
+      apply filter_In. exact (conj Hant Hfet). }
+  split;
+    [destruct (find_node (project_variant plc v) al.(al_link).(link_from)) eqn:E
+    |destruct (find_node (project_variant plc v) al.(al_link).(link_to)) eqn:E];
+    [exists n; reflexivity | contradiction | exists n; reflexivity | contradiction].
+Qed.
+
 (* ================================================================== *)
 (* Projection preserves acyclicity                                    *)
 (* ================================================================== *)
