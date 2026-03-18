@@ -94,6 +94,12 @@ Definition in_context_of (from to_ : Id) : Link := {|
   link_to   := to_;
 |}.
 
+Definition defeats (from to_ : Id) : Link := {|
+  link_kind := Defeater;
+  link_from := from;
+  link_to   := to_;
+|}.
+
 (* ------------------------------------------------------------------ *)
 (* Evidence builders                                                   *)
 (* ------------------------------------------------------------------ *)

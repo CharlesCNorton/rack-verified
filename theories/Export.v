@@ -159,6 +159,7 @@ Definition link_kind_to_json (lk : LinkKind) : Json :=
   JStr match lk with
   | SupportedBy => "SupportedBy"
   | InContextOf => "InContextOf"
+  | Defeater    => "Defeater"
   end.
 
 Definition link_to_json (l : Link) : Json :=
@@ -345,6 +346,7 @@ Definition render_dot_edge (l : Link) : string :=
        ++ match l.(link_kind) with
           | SupportedBy => " [style=solid];"
           | InContextOf  => " [style=dashed];"
+          | Defeater     => " [style=dotted,color=red];"
           end ++ nl.
 
 Definition render_dot (ac : AssuranceCase) : string :=
@@ -844,6 +846,7 @@ Definition json_to_link_kind (j : Json) : option LinkKind :=
   | JStr s =>
     if String.eqb s "SupportedBy" then Some SupportedBy
     else if String.eqb s "InContextOf" then Some InContextOf
+    else if String.eqb s "Defeater" then Some Defeater
     else None
   | _ => None
   end.
@@ -1176,6 +1179,11 @@ Definition sacm_link_element (l : Link) : string :=
       ++ " source=" ++ json_quote l.(link_from)
       ++ " target=" ++ json_quote l.(link_to)
       ++ " />" ++ nl
+  | Defeater =>
+    "    <AssertedChallenge id=" ++ json_quote (l.(link_from) ++ "!>" ++ l.(link_to))
+      ++ " source=" ++ json_quote l.(link_from)
+      ++ " target=" ++ json_quote l.(link_to)
+      ++ " />" ++ nl
   end.
 
 Definition render_sacm (ac : AssuranceCase) : string :=
@@ -1297,6 +1305,9 @@ Definition check_error_to_json (err : CheckError) : Json :=
   | ErrMalformedTimestamp id val =>
       JObj [("error", JStr "MalformedTimestamp"); ("node", JStr id);
             ("value", JStr val)]
+  | ErrUnresolvedDefeater def tgt =>
+      JObj [("error", JStr "UnresolvedDefeater"); ("defeater", JStr def);
+            ("target", JStr tgt)]
   end.
 
 Definition diagnose_to_json (ac : AssuranceCase) : Json :=

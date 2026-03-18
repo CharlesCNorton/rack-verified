@@ -86,7 +86,7 @@ Proof.
   apply String.eqb_eq in Hfrom.
   exists l. repeat split.
   - exact Hin.
-  - destruct l.(link_kind); [reflexivity | discriminate].
+  - destruct l.(link_kind); [reflexivity | discriminate | discriminate].
   - exact Hfrom.
   - exact Hto.
 Qed.
@@ -140,13 +140,13 @@ Proof. intros. congruence. Qed.
 Lemma verify_topo_edge_index : forall ac order l,
     forallb (fun l0 =>
       match l0.(link_kind) with
-      | InContextOf => true
       | SupportedBy =>
         match index_of l0.(link_from) order,
               index_of l0.(link_to)   order with
         | Some i, Some j => Nat.ltb i j
         | _, _ => false
         end
+      | _ => true
       end) ac.(ac_links) = true ->
     In l ac.(ac_links) ->
     l.(link_kind) = SupportedBy ->
@@ -169,13 +169,13 @@ Qed.
 Lemma reaches_has_index : forall ac order u v,
     forallb (fun l =>
       match l.(link_kind) with
-      | InContextOf => true
       | SupportedBy =>
         match index_of l.(link_from) order,
               index_of l.(link_to)   order with
         | Some i, Some j => Nat.ltb i j
         | _, _ => false
         end
+      | _ => true
       end) ac.(ac_links) = true ->
     Reaches ac u v ->
     exists j, index_of v order = Some j.
@@ -193,13 +193,13 @@ Qed.
 Lemma step_index_lt : forall ac order u v iu iv,
     forallb (fun l =>
       match l.(link_kind) with
-      | InContextOf => true
       | SupportedBy =>
         match index_of l.(link_from) order,
               index_of l.(link_to)   order with
         | Some i, Some j => Nat.ltb i j
         | _, _ => false
         end
+      | _ => true
       end) ac.(ac_links) = true ->
     In v (supportedby_children ac u) ->
     index_of u order = Some iu ->
@@ -220,13 +220,13 @@ Qed.
 Lemma reaches_index_lt : forall ac order u v iu iv,
     forallb (fun l =>
       match l.(link_kind) with
-      | InContextOf => true
       | SupportedBy =>
         match index_of l.(link_from) order,
               index_of l.(link_to)   order with
         | Some i, Some j => Nat.ltb i j
         | _, _ => false
         end
+      | _ => true
       end) ac.(ac_links) = true ->
     Reaches ac u v ->
     index_of u order = Some iu ->
@@ -1253,6 +1253,12 @@ Proof.
            | Context | Assumption | Justification => true | _ => false end)
         | _, _ => false
         end
+      | Defeater =>
+        match find_node ac l.(link_to) with
+        | Some nt =>
+          match nt.(node_kind) with Goal | Strategy => true | _ => false end
+        | None => false
+        end
       end).
   - exact H.
   - intros l _ Hp.
@@ -1263,6 +1269,10 @@ Proof.
       apply Bool.andb_true_iff in Hp. destruct Hp as [Hfk Htk].
       simpl.
       destruct nf.(node_kind); try discriminate;
+      destruct nt.(node_kind); try discriminate;
+      reflexivity.
+    + destruct (find_node ac l.(link_to)) as [nt|]; [| discriminate].
+      simpl.
       destruct nt.(node_kind); try discriminate;
       reflexivity.
 Qed.
@@ -1634,6 +1644,13 @@ Proof.
         exfalso; revert Hl; destruct nf.(node_kind); simpl;
         try discriminate;
         intro HH; apply app_eq_nil in HH; destruct HH; discriminate.
+  - unfold diagnose_context_links in H.
+    assert (Hl := flat_map_nil _ _ H l Hin).
+    simpl in Hl. rewrite Hkind in Hl.
+    destruct (Hnd l Hin) as [_ [nt Hto]].
+    rewrite Hto. rewrite Hto in Hl.
+    destruct nt.(node_kind); try reflexivity;
+      simpl in Hl; discriminate.
 Qed.
 
 (** Sub-completeness: diagnose_unique_ids *)
@@ -2018,7 +2035,8 @@ Proof.
   apply app_eq_nil in Hdiag. destruct Hdiag as [Huniq Hdiag].
   apply app_eq_nil in Hdiag. destruct Hdiag as [Hdang Hdiag].
   apply app_eq_nil in Hdiag. destruct Hdiag as [Hacyc Hdiag].
-  apply app_eq_nil in Hdiag. destruct Hdiag as [Hdisch Hctx].
+  apply app_eq_nil in Hdiag. destruct Hdiag as [Hdisch Hdiag].
+  apply app_eq_nil in Hdiag. destruct Hdiag as [Hctx _].
   unfold structural_checks.
   rewrite (diagnose_top_nil_check ac Htop).
   rewrite (diagnose_unique_ids_nil_check ac Huniq).

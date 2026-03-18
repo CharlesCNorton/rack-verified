@@ -105,17 +105,19 @@ Record Node : Type := {
   node_claim      : Prop;     (* logical claim — erased at extraction *)
 }.
 
-Inductive LinkKind : Type := SupportedBy | InContextOf.
+Inductive LinkKind : Type := SupportedBy | InContextOf | Defeater.
 
 (** Decidable equality on [LinkKind]. *)
 Definition LinkKind_eqb (a b : LinkKind) : bool :=
   match a, b with
-  | SupportedBy, SupportedBy | InContextOf, InContextOf => true
+  | SupportedBy, SupportedBy | InContextOf, InContextOf
+  | Defeater, Defeater => true
   | _, _ => false
   end.
 
 Lemma LinkKind_eqb_eq : forall a b, LinkKind_eqb a b = true <-> a = b.
-Proof. destruct a, b; simpl; split; intro; try reflexivity; try discriminate. Qed.
+Proof. destruct a, b; simpl; split; intro; try reflexivity; try discriminate.
+Qed.
 
 Record Link : Type := {
   link_kind : LinkKind;
@@ -356,6 +358,14 @@ Definition well_typed_context_links (ac : AssuranceCase) : Prop :=
       (nt.(node_kind) = Context \/ nt.(node_kind) = Assumption \/
        nt.(node_kind) = Justification).
 
+Definition well_typed_defeater_links (ac : AssuranceCase) : Prop :=
+  forall l,
+    In l ac.(ac_links) ->
+    l.(link_kind) = Defeater ->
+    exists nt,
+      find_node ac l.(link_to) = Some nt /\
+      (nt.(node_kind) = Goal \/ nt.(node_kind) = Strategy).
+
 (* ------------------------------------------------------------------ *)
 (* NoDup decision via boolean reflection                                *)
 (* ------------------------------------------------------------------ *)
@@ -502,6 +512,12 @@ Definition check_context_links (ac : AssuranceCase) : bool :=
          | Context | Assumption | Justification => true | _ => false end)
       | _, _ => false
       end
+    | Defeater =>
+      match find_node ac l.(link_to) with
+      | Some nt =>
+        match nt.(node_kind) with Goal | Strategy => true | _ => false end
+      | None => false
+      end
     end) ac.(ac_links).
 
 (* Stronger discharged check: verify ALL nodes, not just reachable ones.
@@ -583,7 +599,7 @@ Definition sb_in_degree (ac : AssuranceCase)
     match l.(link_kind) with
     | SupportedBy =>
       String.eqb l.(link_to) id && mem_string l.(link_from) remaining
-    | InContextOf => false
+    | _ => false
     end) ac.(ac_links)).
 
 (* Kahn's algorithm: peel zero-in-degree nodes.                        *)
@@ -612,13 +628,13 @@ Definition verify_topo_order (ac : AssuranceCase)
     (order : list Id) : bool :=
   forallb (fun l =>
     match l.(link_kind) with
-    | InContextOf => true
     | SupportedBy =>
       match index_of l.(link_from) order,
             index_of l.(link_to)   order with
       | Some i, Some j => Nat.ltb i j
       | _, _ => false
       end
+    | _ => true
     end) ac.(ac_links) &&
   forallb (fun n => mem_string n.(node_id) order)
           ac.(ac_nodes) &&
@@ -639,12 +655,7 @@ Definition structural_checks (ac : AssuranceCase) : bool :=
   check_all_discharged ac &&
   check_context_links ac.
 
-(** [check_well_formed] is now a synonym for [structural_checks].
-    The former BFS-based acyclicity checker ([check_acyclic]) is
-    retained as a utility but no longer on the main verification path.
-    All soundness proofs go through [verify_topo_order]. *)
-Definition check_well_formed (ac : AssuranceCase) : bool :=
-  structural_checks ac.
+(* check_well_formed is defined below, after check_defeaters. *)
 
 (* ------------------------------------------------------------------ *)
 (* Identity entailment checker (partial decision procedure)             *)
@@ -796,6 +807,36 @@ Fixpoint check_support_tree_go (ac : AssuranceCase) (fuel : nat)
 Definition check_support_tree (ac : AssuranceCase) (id : Id) : bool :=
   check_support_tree_go ac (length ac.(ac_nodes)) id.
 
+(* ------------------------------------------------------------------ *)
+(* Defeater support                                                     *)
+(* ------------------------------------------------------------------ *)
+
+Definition defeater_sources (ac : AssuranceCase) (id : Id) : list Id :=
+  map link_from
+    (filter (fun l => andb
+               (String.eqb l.(link_to) id)
+               (match l.(link_kind) with Defeater => true | _ => false end))
+            ac.(ac_links)).
+
+Definition defeater_resolved (ac : AssuranceCase) (def_id : Id) : bool :=
+  match supportedby_children ac def_id with
+  | [] => false
+  | kids => existsb (check_support_tree_go ac (length ac.(ac_nodes))) kids
+  end.
+
+Definition check_defeaters (ac : AssuranceCase) : bool :=
+  forallb (fun l =>
+    match l.(link_kind) with
+    | Defeater => defeater_resolved ac l.(link_from)
+    | _ => true
+    end) ac.(ac_links).
+
+(** [check_well_formed] extends [structural_checks] with defeater
+    resolution.  All soundness proofs go through [structural_checks];
+    defeater checking is an additional CI-time validation. *)
+Definition check_well_formed (ac : AssuranceCase) : bool :=
+  structural_checks ac && check_defeaters ac.
+
 (* Compute an inspectable witness (if one exists). *)
 Fixpoint compute_support_witness_go (ac : AssuranceCase) (fuel : nat)
     (id : Id) : option SupportWitness :=
@@ -860,7 +901,8 @@ Inductive CheckError : Type :=
   | ErrCycle            : Id -> CheckError
   | ErrExpiredEvidence  : Id -> string -> CheckError  (* node id, expiry date *)
   | ErrMissingRequiredKey : Id -> string -> CheckError (* node id, key name *)
-  | ErrMalformedTimestamp : Id -> string -> CheckError. (* node id, bad value *)
+  | ErrMalformedTimestamp : Id -> string -> CheckError (* node id, bad value *)
+  | ErrUnresolvedDefeater : Id -> Id -> CheckError. (* defeater node, target node *)
 
 Definition diagnose_top (ac : AssuranceCase) : list CheckError :=
   match find_node ac ac.(ac_top) with
@@ -933,6 +975,15 @@ Definition diagnose_context_links (ac : AssuranceCase) : list CheckError :=
         | None => []
         end in
       src_err ++ tgt_err
+    | Defeater =>
+      match find_node ac l.(link_to) with
+      | Some nt =>
+        match nt.(node_kind) with
+        | Goal | Strategy => []
+        | _ => [ErrBadContextTarget l.(link_from) l.(link_to)]
+        end
+      | None => []
+      end
     end) ac.(ac_links).
 
 (** Diagnose acyclicity using the topo-order verifier (matches
@@ -947,13 +998,23 @@ Definition diagnose_acyclic (ac : AssuranceCase) : list CheckError :=
       then [ErrCycle n.(node_id)]
       else []) ac.(ac_nodes).
 
+Definition diagnose_defeaters (ac : AssuranceCase) : list CheckError :=
+  flat_map (fun l =>
+    match l.(link_kind) with
+    | Defeater =>
+      if defeater_resolved ac l.(link_from) then []
+      else [ErrUnresolvedDefeater l.(link_from) l.(link_to)]
+    | _ => []
+    end) ac.(ac_links).
+
 Definition diagnose_all (ac : AssuranceCase) : list CheckError :=
   diagnose_top ac ++
   diagnose_dangling ac ++
   diagnose_unique_ids ac ++
   diagnose_discharged ac ++
   diagnose_context_links ac ++
-  diagnose_acyclic ac.
+  diagnose_acyclic ac ++
+  diagnose_defeaters ac.
 
 (** Diagnostic function that mirrors [structural_checks] exactly.
     Uses [check_all_discharged] (all-nodes) rather than
@@ -982,7 +1043,8 @@ Definition diagnose_structural (ac : AssuranceCase) : list CheckError :=
       end
     | _ => []
     end) ac.(ac_nodes)) ++
-  diagnose_context_links ac.
+  diagnose_context_links ac ++
+  diagnose_defeaters ac.
 
 (* ------------------------------------------------------------------ *)
 (* Metadata validation diagnostics                                      *)
@@ -1059,6 +1121,8 @@ Definition check_link (ac : AssuranceCase) (l : Link) : bool :=
       (match nf.(node_kind) with Goal | Strategy => true | _ => false end) &&
       (match nt.(node_kind) with
        | Context | Assumption | Justification => true | _ => false end)
+    | Defeater =>
+      match nt.(node_kind) with Goal | Strategy => true | _ => false end
     end
   | _, _ => false
   end.

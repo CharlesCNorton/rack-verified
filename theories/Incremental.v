@@ -138,6 +138,8 @@ Definition iac_check_link (iac : IndexedAC) (l : Link) : bool :=
       (match nf.(node_kind) with Goal | Strategy => true | _ => false end) &&
       (match nt.(node_kind) with
        | Context | Assumption | Justification => true | _ => false end)
+    | Defeater =>
+      match nt.(node_kind) with Goal | Strategy => true | _ => false end
     end
   | _, _ => false
   end.
