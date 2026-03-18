@@ -18,10 +18,22 @@ doc: all
 	  theories/Export.v theories/Example.v
 
 ocaml: extract
-	ocamlfind ocamlopt -package str -linkpkg rack.ml test_rack.ml -o test_rack || \
-	  ocamlopt -I +str str.cmxa rack.ml test_rack.ml -o test_rack
-	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_cli.ml -o rack_cli || \
-	  ocamlopt -I +str str.cmxa rack.ml rack_cli.ml -o rack_cli
+	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml test_rack.ml -o test_rack || \
+	  ocamlopt -I +str str.cmxa rack.ml rack_util.ml test_rack.ml -o test_rack
+	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml rack_cli.ml -o rack_cli || \
+	  ocamlopt -I +str str.cmxa rack.ml rack_util.ml rack_cli.ml -o rack_cli
+	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml test_rack_prop.ml -o test_rack_prop || \
+	  ocamlopt -I +str str.cmxa rack.ml rack_util.ml test_rack_prop.ml -o test_rack_prop
+
+test: ocaml
+	./test_rack
+	./test_rack_prop
+
+vos: Makefile.coq
+	$(MAKE) -f Makefile.coq vos
+
+vok: Makefile.coq
+	$(MAKE) -f Makefile.coq vok
 
 clean: Makefile.coq
 	$(MAKE) -f Makefile.coq clean
@@ -30,4 +42,4 @@ clean: Makefile.coq
 	rm -f rack_cli test_rack test_rack_prop
 	rm -rf docs
 
-.PHONY: all extract doc ocaml clean
+.PHONY: all extract doc ocaml test vos vok clean
