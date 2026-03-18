@@ -8,6 +8,5 @@ Ordered from least to most difficult.
 4. Prove `diagnose_structural` completeness without the topo-order premise — `diagnose_structural_complete` currently requires `verify_topo_order ac (topo_sort ac) = true` as a hypothesis
 5. Prove `compose_well_formed` without requiring user-supplied acyclicity/discharged/entailment — derive them from component well-formedness plus disjointness
 6. Prove `family_wide` for `WellFormed` under monotone annotations — `lift_preserves_wf` only covers the trivial `FETrue` case
-7. Split `Core.v` — at ~1700 lines it mixes type definitions, graph operations, well-formedness, topo-sort, diagnostics, and validator registries
-8. Split `Export.v` into separate files: JSON AST/renderer, DOT renderer, SACM renderer, signed blobs, streaming; section boundaries are marked
-9. Prove `avl_insert_preserves_balanced` (AVL balance invariant preservation) — rotation lemmas (`avl_balance_balanced`, `avl_balance_height`) are proved; remaining gap is `Nat.max` monotonicity under insert, blocked by `lia` not handling `Nat.max`
+7. Split `Core.v` — at ~1800 lines it mixes type definitions, graph operations, well-formedness, topo-sort, diagnostics, and validator registries
+8. Prove `avl_insert_preserves_balanced` (AVL balance invariant preservation) — rotation lemmas (`avl_balance_balanced`, `avl_balance_height`) are proved; remaining gap is `Nat.max` monotonicity under insert, blocked by `lia` not handling `Nat.max`
