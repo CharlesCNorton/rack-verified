@@ -1548,3 +1548,181 @@ Proof.
              (or_introl eq_refl) eq_refl Hev).
   - fold N. fold h. exact Hlt.
 Qed.
+
+(* ================================================================== *)
+(* Diagnose-structural completeness                                   *)
+(* ================================================================== *)
+
+(** Sub-completeness: diagnose_top *)
+Lemma diagnose_top_nil_check : forall ac,
+    diagnose_top ac = [] -> check_top_is_goal ac = true.
+Proof.
+  intros ac H. unfold diagnose_top in H. unfold check_top_is_goal.
+  destruct (find_node ac ac.(ac_top)) as [n|]; [| discriminate].
+  destruct n.(node_kind); try discriminate. reflexivity.
+Qed.
+
+(** Sub-completeness: diagnose_dangling *)
+Lemma diagnose_dangling_nil_check : forall ac,
+    diagnose_dangling ac = [] -> check_no_dangling ac = true.
+Proof.
+  intros ac H. unfold check_no_dangling.
+  apply forallb_forall. intros l Hin.
+  unfold diagnose_dangling in H.
+  pose proof (flat_map_nil _ _ H l Hin) as Hl.
+  simpl in Hl.
+  destruct (find_node ac l.(link_from)) as [nf|];
+  destruct (find_node ac l.(link_to))   as [nt|];
+  simpl in Hl; try discriminate; reflexivity.
+Qed.
+
+(** Sub-completeness: discharged (all-nodes variant) *)
+Lemma diagnose_discharged_all_nil_check : forall ac,
+    flat_map (fun n =>
+      match n.(node_kind) with
+      | Goal | Strategy =>
+        match supportedby_children ac n.(node_id) with
+        | [] => [ErrUnsupported n.(node_id)]
+        | _ => []
+        end
+      | Solution =>
+        match n.(node_evidence) with
+        | None => [ErrMissingEvidence n.(node_id)]
+        | Some (ProofTerm _ _ _ _) => []
+        | Some (Certificate b _ v) =>
+          if v b then [] else [ErrInvalidEvidence n.(node_id)]
+        end
+      | _ => []
+      end) ac.(ac_nodes) = [] ->
+    check_all_discharged ac = true.
+Proof.
+  intros ac H. unfold check_all_discharged.
+  apply forallb_forall. intros n Hin.
+  assert (Hn := flat_map_nil _ _ H n Hin).
+  simpl in Hn.
+  destruct n.(node_kind); try reflexivity.
+  - destruct (supportedby_children ac n.(node_id));
+      [discriminate | reflexivity].
+  - destruct (supportedby_children ac n.(node_id));
+      [discriminate | reflexivity].
+  - destruct n.(node_evidence) as [[? ? ? ?|b ? v]|];
+      try reflexivity; try discriminate.
+    destruct (v b); [reflexivity | discriminate].
+Qed.
+
+(** Sub-completeness: diagnose_context_links (requires no dangling
+    links, since the diagnostic does not flag missing endpoints). *)
+Lemma diagnose_context_links_nil_check : forall ac,
+    no_dangling_links ac ->
+    diagnose_context_links ac = [] ->
+    check_context_links ac = true.
+Proof.
+  intros ac Hnd H. unfold check_context_links.
+  apply forallb_forall. intros l Hin.
+  destruct l.(link_kind) eqn:Hkind.
+  - reflexivity.
+  - unfold diagnose_context_links in H.
+    assert (Hl := flat_map_nil _ _ H l Hin).
+    simpl in Hl. rewrite Hkind in Hl. cbv zeta in Hl.
+    destruct (Hnd l Hin) as [[nf Hfrom] [nt Hto]].
+    rewrite Hfrom, Hto. rewrite Hfrom, Hto in Hl. simpl in Hl.
+    apply Bool.andb_true_iff. split.
+    + destruct nf.(node_kind); try reflexivity;
+        exfalso; revert Hl; destruct nt.(node_kind); simpl; discriminate.
+    + destruct nt.(node_kind); try reflexivity;
+        exfalso; revert Hl; destruct nf.(node_kind); simpl;
+        try discriminate;
+        intro HH; apply app_eq_nil in HH; destruct HH; discriminate.
+Qed.
+
+(** Sub-completeness: diagnose_unique_ids *)
+
+Fixpoint diag_uid_go (seen : list Id) (nodes : list Node)
+  : list CheckError :=
+  match nodes with
+  | [] => []
+  | n :: rest =>
+    if mem_string n.(node_id) seen
+    then ErrDuplicateId n.(node_id) :: diag_uid_go seen rest
+    else diag_uid_go (n.(node_id) :: seen) rest
+  end.
+
+Lemma diagnose_unique_ids_unfold : forall ac,
+    diagnose_unique_ids ac = diag_uid_go [] ac.(ac_nodes).
+Proof. reflexivity. Qed.
+
+Lemma diag_uid_go_nil_disjoint : forall seen ns,
+    diag_uid_go seen ns = [] ->
+    forall id, In id (map node_id ns) ->
+    mem_string id seen = false.
+Proof.
+  intros seen ns. revert seen.
+  induction ns as [|n rest IH]; intros seen H id Hin.
+  - destruct Hin.
+  - simpl in H.
+    destruct (mem_string n.(node_id) seen) eqn:Hmem; [discriminate |].
+    simpl in Hin. destruct Hin as [<- | Hin].
+    + exact Hmem.
+    + pose proof (IH _ H id Hin) as IHres.
+      unfold mem_string in IHres. simpl in IHres.
+      apply Bool.orb_false_iff in IHres. exact (proj2 IHres).
+Qed.
+
+Lemma diag_uid_go_nil_nodupb : forall seen ns,
+    diag_uid_go seen ns = [] ->
+    nodupb (map node_id ns) = true.
+Proof.
+  intros seen ns. revert seen.
+  induction ns as [|n rest IH]; intros seen H.
+  - reflexivity.
+  - simpl. simpl in H.
+    destruct (mem_string n.(node_id) seen) eqn:Hmem; [discriminate |].
+    apply Bool.andb_true_iff. split.
+    + apply Bool.negb_true_iff.
+      destruct (mem_string n.(node_id) (map node_id rest)) eqn:Hm2.
+      * exfalso.
+        apply existsb_In in Hm2.
+        pose proof (diag_uid_go_nil_disjoint _ _ H _ Hm2) as Habs.
+        unfold mem_string in Habs. simpl in Habs.
+        rewrite String.eqb_refl in Habs. discriminate.
+      * reflexivity.
+    + exact (IH _ H).
+Qed.
+
+Lemma diagnose_unique_ids_nil_check : forall ac,
+    diagnose_unique_ids ac = [] ->
+    check_unique_ids ac = true.
+Proof.
+  intros ac H.
+  rewrite diagnose_unique_ids_unfold in H.
+  exact (diag_uid_go_nil_nodupb [] _ H).
+Qed.
+
+(** Combined completeness: diagnose_structural returns [] implies
+    structural_checks returns true, given that the topological
+    order verifies.  The topo_order precondition is needed because
+    diagnose_acyclic falls back to BFS when verify_topo_order fails,
+    and BFS completeness is not proved here. *)
+Theorem diagnose_structural_complete : forall ac,
+    diagnose_structural ac = [] ->
+    verify_topo_order ac (topo_sort ac) = true ->
+    structural_checks ac = true.
+Proof.
+  intros ac Hdiag Htopo.
+  unfold diagnose_structural in Hdiag.
+  apply app_eq_nil in Hdiag. destruct Hdiag as [Htop Hdiag].
+  apply app_eq_nil in Hdiag. destruct Hdiag as [Huniq Hdiag].
+  apply app_eq_nil in Hdiag. destruct Hdiag as [Hdang Hdiag].
+  apply app_eq_nil in Hdiag. destruct Hdiag as [Hacyc Hdiag].
+  apply app_eq_nil in Hdiag. destruct Hdiag as [Hdisch Hctx].
+  unfold structural_checks.
+  rewrite (diagnose_top_nil_check ac Htop).
+  rewrite (diagnose_unique_ids_nil_check ac Huniq).
+  rewrite (diagnose_dangling_nil_check ac Hdang).
+  rewrite Htopo.
+  rewrite (diagnose_discharged_all_nil_check ac Hdisch).
+  rewrite (diagnose_context_links_nil_check ac
+            (check_no_dangling_correct ac
+              (diagnose_dangling_nil_check ac Hdang)) Hctx).
+  reflexivity.
+Qed.

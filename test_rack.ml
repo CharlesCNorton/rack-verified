@@ -211,4 +211,27 @@ let () =
    | Nil -> assert_true "diagnose finds errors" false
    | _ -> assert_true "diagnose finds errors" true);
 
+  (* keyed validator *)
+  Printf.printf "\n[keyed validator]\n";
+  let secret = "test-secret-key" in
+  let payload = "CBMC:all_assertions_hold:v6.0" in
+  let signed = Rack_util.sign_blob secret payload in
+  let validator = Rack_util.make_keyed_validator secret in
+  assert_true "signed blob validates"
+    (validator (coq_of_string signed));
+  assert_false "tampered blob rejected"
+    (validator (coq_of_string (signed ^ "x")));
+  assert_false "wrong secret rejected"
+    ((Rack_util.make_keyed_validator "wrong-key") (coq_of_string signed));
+
+  (* keyed validator as Certificate evidence *)
+  Printf.printf "\n[keyed Certificate]\n";
+  let keyed_cert = Certificate (coq_of_string signed,
+    coq_of_string "CBMC",
+    Rack_util.make_keyed_validator secret) in
+  assert_true "keyed cert runtime check"
+    (evidence_runtime_check keyed_cert);
+  assert_true "keyed cert tool is CBMC"
+    (string_of_coq (evidence_tool keyed_cert) = "CBMC");
+
   Printf.printf "\n=== All tests passed ===\n"

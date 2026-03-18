@@ -1301,3 +1301,44 @@ Definition check_error_to_json (err : CheckError) : Json :=
 
 Definition diagnose_to_json (ac : AssuranceCase) : Json :=
   JArr (map check_error_to_json (diagnose_all ac)).
+
+(* ------------------------------------------------------------------ *)
+(* Typed parse result with error reporting                             *)
+(* ------------------------------------------------------------------ *)
+
+(** Structured parse result: success carries the JSON value,
+    error carries the original input for diagnostics. *)
+Inductive ParseResult : Type :=
+  | ParseSuccess : Json -> ParseResult
+  | ParseError : string -> ParseResult.
+
+(** Parse with typed error.  On failure, the full input is returned
+    in [ParseError] for diagnostic use by the caller. *)
+Definition parse_json_err (s : string) : ParseResult :=
+  match parse_json s with
+  | Some j => ParseSuccess j
+  | None => ParseError s
+  end.
+
+(** Boolean predicate: did parsing succeed? *)
+Definition parse_ok (r : ParseResult) : bool :=
+  match r with ParseSuccess _ => true | ParseError _ => false end.
+
+(** Extract the JSON value on success. *)
+Definition parse_result_json (r : ParseResult) : option Json :=
+  match r with ParseSuccess j => Some j | ParseError _ => None end.
+
+(** [parse_json_err] agrees with [parse_json] on success. *)
+Lemma parse_json_err_some : forall s j,
+    parse_json s = Some j ->
+    parse_json_err s = ParseSuccess j.
+Proof.
+  intros s j H. unfold parse_json_err. rewrite H. reflexivity.
+Qed.
+
+Lemma parse_json_err_none : forall s,
+    parse_json s = None ->
+    parse_json_err s = ParseError s.
+Proof.
+  intros s H. unfold parse_json_err. rewrite H. reflexivity.
+Qed.

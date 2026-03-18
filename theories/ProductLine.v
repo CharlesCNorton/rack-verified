@@ -219,3 +219,29 @@ Definition variants_affected_by_feature (plc : ProductLineCase)
       | FEAtom g => String.eqb f g
       | _ => false
       end) plc.(plc_nodes)).
+
+(* ================================================================== *)
+(* Lifted cases preserve well-formedness                              *)
+(* ================================================================== *)
+
+(** A lifted case projected to any valid variant recovers the
+    original, so well-formedness is trivially preserved. *)
+Theorem lift_preserves_wf : forall ac fm v,
+    WellFormed ac ->
+    valid_variant fm v = true ->
+    WellFormed (project_variant (lift_to_product_line ac fm) v).
+Proof.
+  intros ac fm v Hwf Hv.
+  rewrite project_lifted; [exact Hwf | exact Hv].
+Qed.
+
+(** Boolean version: structural checks pass on any valid projection
+    of a lifted case. *)
+Corollary lift_preserves_structural : forall ac fm v,
+    structural_checks ac = true ->
+    valid_variant fm v = true ->
+    structural_checks (project_variant (lift_to_product_line ac fm) v) = true.
+Proof.
+  intros ac fm v Hsc Hv.
+  rewrite project_lifted; [exact Hsc | exact Hv].
+Qed.

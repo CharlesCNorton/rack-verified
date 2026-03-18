@@ -46,3 +46,37 @@ let rec list_of_coq = function
 let rec coq_list_of = function
   | [] -> Nil
   | x :: xs -> Cons (x, coq_list_of xs)
+
+(* ------------------------------------------------------------------ *)
+(* FNV-1a hash-based evidence validator                                *)
+(* ------------------------------------------------------------------ *)
+
+(* FNV-1a 32-bit hash (non-cryptographic; demonstrates the pattern.
+   In production, replace with HMAC-SHA256 via an external library.) *)
+let fnv1a s =
+  let h = ref 0x811c9dc5 in
+  String.iter (fun c ->
+    h := !h lxor (Char.code c);
+    h := !h * 0x01000193;
+    h := !h land 0x3FFFFFFF
+  ) s;
+  Printf.sprintf "%08x" !h
+
+(* Build a Certificate validator keyed by a shared secret.
+   The blob format is "payload:fnv1a(secret+payload)".
+   Returns a (coq_string -> bool) suitable for the Certificate constructor. *)
+let make_keyed_validator secret =
+  fun coq_blob ->
+    let blob = string_of_coq coq_blob in
+    match String.rindex_opt blob ':' with
+    | None -> false
+    | Some i ->
+      let payload = String.sub blob 0 i in
+      let sig_ = String.sub blob (i + 1) (String.length blob - i - 1) in
+      let expected = fnv1a (secret ^ payload) in
+      sig_ = expected
+
+(* Create a signed blob: "payload:fnv1a(secret+payload)" *)
+let sign_blob secret payload =
+  let sig_ = fnv1a (secret ^ payload) in
+  payload ^ ":" ^ sig_

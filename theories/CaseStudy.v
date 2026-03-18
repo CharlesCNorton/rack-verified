@@ -401,3 +401,78 @@ Definition gen_benchmark_case (n : nat) : AssuranceCase :=
 (* Small benchmark cases compile-time check *)
 Example bench_10_wf :
   check_well_formed (gen_benchmark_case 10) = true := eq_refl.
+
+(* ================================================================== *)
+(* PRAdmissible for cs_delta                                          *)
+(* ================================================================== *)
+
+Example cs_delta_result_structural :
+  structural_checks (apply_delta cs_ac cs_delta) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition cs_delta_result_wf : WellFormed (apply_delta cs_ac cs_delta).
+Proof.
+  apply build_well_formed; [vm_compute; reflexivity | |
+    intros n e Hin Hkind He; simpl in Hin;
+    repeat (destruct Hin as [<- | Hin];
+      [try discriminate; injection He as <-; vm_compute; reflexivity |]);
+    destruct Hin as []].
+  intros ? ? Hf Hk; vm_compute in Hf;
+  repeat match type of Hf with
+  | (if ?c then _ else _) = _ =>
+      destruct c;
+      [ injection Hf; intro; subst;
+        first [ vm_compute; tauto
+              | vm_compute; intuition
+              | vm_compute; firstorder
+              | vm_compute; intro H; destruct H as [? [? [? [? [? [? [? _]]]]]]]; assumption
+              | vm_compute; intro H; destruct H; assumption
+              | exfalso; destruct Hk; discriminate ]
+      | ]
+  end; try discriminate.
+Qed.
+
+Lemma cs_delta_preserved : forall id,
+    In id (delta_preserved_nodes cs_ac cs_delta) ->
+    node_preserved cs_ac (apply_delta cs_ac cs_delta) id.
+Proof.
+  intros id Hpres.
+  unfold delta_preserved_nodes in Hpres. simpl in Hpres.
+  unfold node_preserved.
+  repeat (destruct Hpres as [<- | Hpres];
+    [vm_compute; repeat split; reflexivity |]).
+  destruct Hpres.
+Qed.
+
+Definition cs_pr_admissible : PRAdmissible cs_ac cs_delta := {|
+  pra_result_wf := cs_delta_result_wf;
+  pra_preserved := cs_delta_preserved;
+|}.
+
+(* ================================================================== *)
+(* delta_preserves_subtree for cs_delta                               *)
+(* ================================================================== *)
+
+Lemma cs_delta_preserves_subtree :
+    delta_preserves_subtree cs_ac cs_delta "CS-top".
+Proof.
+  intros id Hpres _. exact (cs_delta_preserved id Hpres).
+Qed.
+
+(* ================================================================== *)
+(* Family-wide structural checks for cs_plc                          *)
+(* ================================================================== *)
+
+(** Every valid variant of [cs_plc] passes structural checks.
+    The proof case-splits on feature membership (3 features → 4 valid
+    variants since "alloc" is mandatory), then computes each projection. *)
+Lemma cs_family_wide_structural :
+    family_wide cs_plc (fun ac => structural_checks ac = true).
+Proof.
+  intros v Hvalid.
+  unfold project_variant, cs_plc. simpl.
+  destruct (mem_string "fuzz" v) eqn:Hfuzz;
+  destruct (mem_string "kani" v) eqn:Hkani;
+  simpl; rewrite ?Hfuzz, ?Hkani; simpl;
+  reflexivity.
+Qed.
