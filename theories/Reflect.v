@@ -1815,92 +1815,178 @@ Proof.
   - right. exact Hf.
 Qed.
 
+(* ================================================================== *)
+(* NoDup-free BFS closure via missing-count fuel bound               *)
+(* ================================================================== *)
+
+(** Count of node IDs not yet in the accumulator.  Decreases by at
+    least 1 per BFS step, providing a fuel bound without NoDup. *)
+Definition missing_count (ac : AssuranceCase) (acc : list Id) : nat :=
+  length (filter (fun id => negb (mem_string id acc))
+                 (map node_id ac.(ac_nodes))).
+
+Lemma filter_length_le_gen : forall {A} (f : A -> bool) (l : list A),
+    length (filter f l) <= length l.
+Proof.
+  intros A f l. induction l as [|a l' IH]; simpl.
+  - apply Nat.le_refl.
+  - destruct (f a); simpl.
+    + apply le_n_S. exact IH.
+    + apply Nat.le_trans with (length l').
+      * exact IH.
+      * apply Nat.le_succ_diag_r.
+Qed.
+
+Lemma missing_count_le_nodes : forall ac acc,
+    missing_count ac acc <= length ac.(ac_nodes).
+Proof.
+  intros. unfold missing_count.
+  apply Nat.le_trans with (length (map node_id ac.(ac_nodes))).
+  - exact (filter_length_le_gen _ _).
+  - rewrite length_map. apply Nat.le_refl.
+Qed.
+
+Lemma missing_count_zero_mem : forall ac acc id,
+    missing_count ac acc = 0 ->
+    In id (map node_id ac.(ac_nodes)) ->
+    mem_string id acc = true.
+Proof.
+  intros ac acc id H Hin.
+  unfold missing_count in H.
+  destruct (mem_string id acc) eqn:Hm; [reflexivity |].
+  exfalso.
+  assert (Hfilt : In id (filter (fun x => negb (mem_string x acc))
+                           (map node_id ac.(ac_nodes)))).
+  { apply filter_In. split; [exact Hin |]. rewrite Hm. reflexivity. }
+  destruct (filter (fun x => negb (mem_string x acc))
+              (map node_id ac.(ac_nodes))) as [|a rest] eqn:E.
+  - destruct Hfilt.
+  - simpl in H. discriminate.
+Qed.
+
+Lemma mem_string_weaken_app : forall s l1 l2,
+    mem_string s l1 = true -> mem_string s (l1 ++ l2) = true.
+Proof.
+  intros s l1 l2 H. unfold mem_string in *.
+  apply In_existsb. apply in_or_app. left. exact (existsb_In s l1 H).
+Qed.
+
+Lemma filter_incl_length : forall {A} (f g : A -> bool) (l : list A),
+    (forall x, In x l -> f x = true -> g x = true) ->
+    length (filter f l) <= length (filter g l).
+Proof.
+  intros A f g l Himpl. induction l as [|a l' IH]; simpl.
+  - apply Nat.le_refl.
+  - assert (Himpl' : forall x, In x l' -> f x = true -> g x = true)
+      by (intros x Hx; exact (Himpl x (or_intror Hx))).
+    destruct (f a) eqn:Hf; destruct (g a) eqn:Hg; simpl.
+    + apply le_n_S. exact (IH Himpl').
+    + exfalso. rewrite (Himpl a (or_introl eq_refl) Hf) in Hg. discriminate.
+    + apply Nat.le_trans with (length (filter g l')).
+      * exact (IH Himpl').
+      * apply Nat.le_succ_diag_r.
+    + exact (IH Himpl').
+Qed.
+
+Lemma filter_strict_length : forall {A} (f g : A -> bool) (l : list A),
+    (forall x, In x l -> f x = true -> g x = true) ->
+    (exists x, In x l /\ g x = true /\ f x = false) ->
+    length (filter f l) < length (filter g l).
+Proof.
+  intros A f g l Himpl [w [Hw [Hgw Hfw]]].
+  induction l as [|a l' IH]; [destruct Hw |].
+  assert (Himpl' : forall x, In x l' -> f x = true -> g x = true)
+    by (intros x Hx; exact (Himpl x (or_intror Hx))).
+  simpl.
+  destruct Hw as [<- | Hw'].
+  - rewrite Hgw, Hfw. simpl.
+    apply le_n_S. exact (filter_incl_length f g l' Himpl').
+  - destruct (f a) eqn:Hf; destruct (g a) eqn:Hg; simpl.
+    + apply le_n_S. exact (IH Himpl' Hw').
+    + exfalso. rewrite (Himpl a (or_introl eq_refl) Hf) in Hg. discriminate.
+    + apply Nat.le_lt_trans with (length (filter g l')).
+      * exact (filter_incl_length f g l' Himpl').
+      * apply Nat.lt_succ_diag_r.
+    + exact (IH Himpl' Hw').
+Qed.
+
+Lemma missing_count_decrease : forall ac acc fresh,
+    fresh <> [] ->
+    (forall x, In x fresh -> negb (mem_string x acc) = true) ->
+    (forall x, In x fresh -> In x (map node_id ac.(ac_nodes))) ->
+    missing_count ac (acc ++ fresh) < missing_count ac acc.
+Proof.
+  intros ac acc fresh Hne Hnot_in Hin_nids.
+  unfold missing_count.
+  apply filter_strict_length.
+  - intros id _ Hf.
+    apply Bool.negb_true_iff in Hf. apply Bool.negb_true_iff.
+    destruct (mem_string id acc) eqn:Hm; [|reflexivity].
+    exfalso. rewrite (mem_string_weaken_app id acc fresh Hm) in Hf.
+    discriminate.
+  - destruct fresh as [|h t]; [contradiction |].
+    exists h. split; [| split].
+    + exact (Hin_nids h (or_introl eq_refl)).
+    + exact (Hnot_in h (or_introl eq_refl)).
+    + apply Bool.negb_false_iff.
+      unfold mem_string. apply In_existsb.
+      apply in_or_app. right. left. reflexivity.
+Qed.
+
 Theorem rsf_result_closed : forall ac fuel frontier acc,
     no_dangling_links ac ->
-    NoDup (map node_id ac.(ac_nodes)) ->
     (forall w, In w acc ->
       (forall v, In v (supportedby_children ac w) -> In v acc) \/
       In w frontier) ->
     (forall w, In w frontier -> In w acc) ->
     (forall x, In x acc -> In x (map node_id ac.(ac_nodes))) ->
-    NoDup acc ->
-    length (map node_id ac.(ac_nodes)) <= fuel + length (acc : list Id) ->
+    missing_count ac acc <= fuel ->
     forall w v,
     In w (reachable_set_fuel ac fuel frontier acc) ->
     In v (supportedby_children ac w) ->
     In v (reachable_set_fuel ac fuel frontier acc).
 Proof.
   intros ac fuel. induction fuel as [|f IH];
-    intros frontier acc Hnd HndN HINV HSUB HIN HndA HFUEL w v Hw Hv.
-  - simpl in *.
-    assert (Hfr_nil : filter (fun id => negb (mem_string id acc))
-              (flat_map (supportedby_children ac) frontier) = []).
-    { destruct (filter (fun id => negb (mem_string id acc))
-                  (flat_map (supportedby_children ac) frontier))
-        as [|s rest] eqn:E; [exact eq_refl | exfalso].
-      assert (Hs : In s (s :: rest)) by (left; reflexivity).
-      rewrite <- E in Hs. apply filter_In in Hs.
-      destruct Hs as [Hsin Hsneg]. apply Bool.negb_true_iff in Hsneg.
-      apply in_flat_map in Hsin. destruct Hsin as [p [_ Hsc]].
-      assert (Hsn : In s (map node_id ac.(ac_nodes)))
-        by exact (children_in_node_ids ac p s Hnd Hsc).
-      destruct (In_dec string_dec s acc) as [Hy | Hn].
-      - apply In_existsb in Hy. unfold mem_string in Hsneg.
-        rewrite Hy in Hsneg. discriminate.
-      - assert (Hnd_sa : NoDup (s :: acc)) by (constructor; assumption).
-        assert (Hincl : forall x, In x (s :: acc) ->
-          In x (map node_id ac.(ac_nodes))).
-        { intros x [<- | Hx]; [exact Hsn | exact (HIN x Hx)]. }
-        pose proof (NoDup_incl_le (s :: acc) (map node_id ac.(ac_nodes))
-                      Hnd_sa Hincl) as Hle2.
-        change (length (s :: acc)) with (S (length (acc : list Id))) in Hle2.
-        exact (Nat.nle_succ_diag_l _ (Nat.le_trans _ _ _ Hle2 HFUEL)). }
-    exact (rsf_closed_terminal ac frontier acc HINV Hfr_nil w v Hw Hv).
-  - simpl in Hw |- *.
+    intros frontier acc Hnd HINV HSUB HIN HFUEL w v Hw Hv.
+  - (* fuel = 0: all node IDs are in acc *)
+    simpl in Hw |- *.
+    assert (Hmz : missing_count ac acc = 0) by (apply Nat.le_0_r; exact HFUEL).
+    assert (Hv_nid : In v (map node_id ac.(ac_nodes)))
+      by exact (children_in_node_ids ac w v Hnd Hv).
+    exact (existsb_In v acc (missing_count_zero_mem ac acc v Hmz Hv_nid)).
+  - (* fuel = S f *)
+    simpl in Hw |- *.
     remember (filter (fun id => negb (mem_string id acc))
                (flat_map (supportedby_children ac) frontier)) as fresh.
     destruct fresh as [|h t].
     + exact (rsf_closed_terminal ac frontier acc HINV
                (eq_sym Heqfresh) w v Hw Hv).
-    + assert (HIN' : forall x, In x (acc ++ h :: t) ->
-        In x (map node_id ac.(ac_nodes))).
+    + assert (Hfresh_not_in : forall x, In x (h :: t) ->
+          negb (mem_string x acc) = true).
+      { intros x Hx. rewrite Heqfresh in Hx.
+        apply filter_In in Hx. exact (proj2 Hx). }
+      assert (HIN' : forall x, In x (acc ++ h :: t) ->
+          In x (map node_id ac.(ac_nodes))).
       { intros x Hx. apply in_app_iff in Hx. destruct Hx as [Ha | Hfr].
         - exact (HIN x Ha).
         - rewrite Heqfresh in Hfr. apply filter_In in Hfr.
           destruct Hfr as [Hfm _]. apply in_flat_map in Hfm.
           destruct Hfm as [p [_ Hpc]].
           exact (children_in_node_ids ac p x Hnd Hpc). }
-      assert (HFUEL' : length (map node_id ac.(ac_nodes)) <=
-                        f + length ((acc ++ h :: t) : list Id))
-        by (rewrite length_app; simpl; lia).
-      assert (Hfr_disj : forall x, In x (h :: t) -> ~In x acc).
-      { intros x Hx Hxa. rewrite Heqfresh in Hx.
-        apply filter_In in Hx. destruct Hx as [_ Hx].
-        apply Bool.negb_true_iff in Hx.
-        apply In_existsb in Hxa. unfold mem_string in Hx.
-        rewrite Hxa in Hx. discriminate. }
-      assert (HndA' : NoDup (acc ++ h :: t)).
-      { clear -HndA HndN HIN HIN' Hfr_disj.
-        induction acc as [|a acc' IHa].
-        - admit.
-        - inversion HndA as [|? ? Hna Hnd']; subst. simpl. constructor.
-          + intro Hin. apply in_app_iff in Hin. destruct Hin as [Ha | Hfr].
-            * exact (Hna Ha).
-            * exact (Hfr_disj a Hfr (or_introl eq_refl)).
-          + apply IHa.
-            * intros x Hx. exact (HIN x (or_intror Hx)).
-            * exact Hnd'.
-            * intros x Hx. apply HIN'. simpl. apply in_app_iff in Hx.
-              destruct Hx as [Hx | Hx];
-                [right; apply in_or_app; left |
-                 right; apply in_or_app; right]; exact Hx.
-            * intros x Hx Hxa. exact (Hfr_disj x Hx (or_intror Hxa)). }
-      exact (IH (h :: t) (acc ++ h :: t)
-               Hnd HndN
+      assert (HFUEL' : missing_count ac (acc ++ h :: t) <= f).
+      { assert (Hlt : missing_count ac (acc ++ h :: t) <
+                       missing_count ac acc).
+        { apply missing_count_decrease; [discriminate | exact Hfresh_not_in |].
+          intros x Hx.
+          exact (HIN' x (in_or_app acc (h :: t) x (or_intror Hx))). }
+        apply Nat.lt_succ_r. apply Nat.lt_le_trans with (missing_count ac acc).
+        - exact Hlt.
+        - exact HFUEL. }
+      exact (IH (h :: t) (acc ++ h :: t) Hnd
                (rsf_inv_step ac frontier acc (h :: t) Heqfresh HINV)
                (fun w0 Hw0 => in_or_app acc (h :: t) w0 (or_intror Hw0))
-               HIN' HndA' HFUEL' w v Hw Hv).
-Admitted.
+               HIN' HFUEL' w v Hw Hv).
+Qed.
 
 Theorem reachable_from_closed : forall ac start w v,
     no_dangling_links ac ->
@@ -1909,21 +1995,16 @@ Theorem reachable_from_closed : forall ac start w v,
     In v (supportedby_children ac w) ->
     In v (reachable_from ac start).
 Proof.
-  intros ac start w v Hnd HndN Hw Hv.
+  intros ac start w v Hnd _ Hw Hv.
   unfold reachable_from in *.
   set (kids := supportedby_children ac start) in *.
-  replace (length (ac_nodes ac)) with
-    (length (map node_id (ac_nodes ac))) in *
-    by (rewrite length_map; reflexivity).
-  assert (HndK : NoDup kids) by admit.
-  exact (rsf_result_closed ac _ kids kids Hnd HndN
+  exact (rsf_result_closed ac (length ac.(ac_nodes)) kids kids Hnd
            (fun w0 Hw0 => or_intror Hw0)
            (fun w0 Hw0 => Hw0)
            (fun x Hx => children_in_node_ids ac start x Hnd Hx)
-           HndK
-           (Nat.le_add_r _ _)
+           (missing_count_le_nodes ac kids)
            w v Hw Hv).
-Admitted.
+Qed.
 
 (** Combined completeness. *)
 Theorem diagnose_structural_complete : forall ac,
