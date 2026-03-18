@@ -97,12 +97,41 @@ Definition apply_link_change (ac : AssuranceCase)
     |}
   end.
 
+(** Apply a single trace change. *)
+Definition apply_trace_change (tls : list TraceLink)
+    (tc : TraceChange) : list TraceLink :=
+  match tc with
+  | AddTrace tl => tls ++ [tl]
+  | RemoveTrace tl =>
+    filter (fun t =>
+      negb (TraceLinkKind_eqb t.(tl_kind) tl.(tl_kind) &&
+            String.eqb t.(tl_source) tl.(tl_source) &&
+            String.eqb t.(tl_target) tl.(tl_target)))
+      tls
+  end.
+
 (** Apply all changes in a delta, left to right. *)
 Definition apply_delta (ac : AssuranceCase)
     (delta : AssuranceDelta) : AssuranceCase :=
   let ac1 := fold_left apply_node_change
                        delta.(ad_node_changes) ac in
   fold_left apply_link_change delta.(ad_link_changes) ac1.
+
+(** Apply a delta to a trace graph, updating both the case and traces. *)
+Definition apply_delta_trace (tg : TraceGraph)
+    (delta : AssuranceDelta) : TraceGraph := {|
+  tg_case := apply_delta tg.(tg_case) delta;
+  tg_requirements := tg.(tg_requirements);
+  tg_artifacts := tg.(tg_artifacts);
+  tg_commits := match delta.(ad_commit) with
+                | Some c => tg.(tg_commits) ++ [c]
+                | None => tg.(tg_commits)
+                end;
+  tg_tool_runs := tg.(tg_tool_runs);
+  tg_owners := tg.(tg_owners);
+  tg_trace_links := fold_left apply_trace_change
+                      delta.(ad_trace_changes) tg.(tg_trace_links);
+|}.
 
 (* ================================================================== *)
 (* Delta analysis                                                      *)
