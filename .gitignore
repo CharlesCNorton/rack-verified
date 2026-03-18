@@ -17,6 +17,10 @@ rack.mli
 *.byte
 *.native
 rack_cli
+rack_bench
+rack_bridge
+rack_sacm_validate
 test_rack
 test_rack_prop
+test_rack_extended
 docs/

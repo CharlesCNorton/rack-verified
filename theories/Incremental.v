@@ -341,3 +341,236 @@ Proof.
   destruct (find (fun n => String.eqb n.(node_id) id) ac.(ac_nodes));
     reflexivity.
 Qed.
+
+(* ================================================================== *)
+(* BST ordering proof for build_bst_index                              *)
+(* ================================================================== *)
+
+Lemma fold_left_preserves : forall {A B : Type} (f : A -> B -> A)
+    (P : A -> Prop) (l : list B) (a : A),
+    P a -> (forall a' b, P a' -> P (f a' b)) ->
+    P (fold_left f l a).
+Proof.
+  intros A B f P l. induction l as [|x xs IH]; intros a Hp Hstep; simpl.
+  - exact Hp.
+  - exact (IH (f a x) (Hstep a x Hp) Hstep).
+Qed.
+
+Opaque String.compare.
+
+Lemma bst_insert_keys_lt : forall id n t bound,
+    (forall id' n', bst_find id' t = Some n' ->
+      String.compare id' bound = Lt) ->
+    String.compare id bound = Lt ->
+    forall id' n', bst_find id' (bst_insert id n t) = Some n' ->
+    String.compare id' bound = Lt.
+Proof.
+  intros id n t bound Hkeys Hid id' n' Hfind.
+  destruct (String.compare id id') eqn:Hcmp.
+  - apply String.compare_eq_iff in Hcmp. subst.
+    rewrite bst_insert_find in Hfind. injection Hfind as <-. exact Hid.
+  - rewrite bst_insert_find_other in Hfind;
+      [exact (Hkeys id' n' Hfind) | rewrite Hcmp; discriminate].
+  - rewrite bst_insert_find_other in Hfind;
+      [exact (Hkeys id' n' Hfind) | rewrite Hcmp; discriminate].
+Qed.
+
+Lemma bst_insert_keys_gt : forall id n t bound,
+    (forall id' n', bst_find id' t = Some n' ->
+      String.compare id' bound = Gt) ->
+    String.compare id bound = Gt ->
+    forall id' n', bst_find id' (bst_insert id n t) = Some n' ->
+    String.compare id' bound = Gt.
+Proof.
+  intros id n t bound Hkeys Hid id' n' Hfind.
+  destruct (String.compare id id') eqn:Hcmp.
+  - apply String.compare_eq_iff in Hcmp. subst.
+    rewrite bst_insert_find in Hfind. injection Hfind as <-. exact Hid.
+  - rewrite bst_insert_find_other in Hfind;
+      [exact (Hkeys id' n' Hfind) | rewrite Hcmp; discriminate].
+  - rewrite bst_insert_find_other in Hfind;
+      [exact (Hkeys id' n' Hfind) | rewrite Hcmp; discriminate].
+Qed.
+
+Lemma bst_insert_preserves_ordered : forall id n t,
+    BST_ordered t -> BST_ordered (bst_insert id n t).
+Proof.
+  intros id n t. induction t as [|l IHl k v r IHr]; intro Hord.
+  - simpl. constructor; try constructor;
+      intros id' n' Hf; simpl in Hf; discriminate.
+  - inversion Hord as [|? ? ? ? Hl Hr Hkl Hkr]; subst.
+    simpl. destruct (String.compare id k) eqn:Hcmp.
+    + constructor; assumption.
+    + constructor; [exact (IHl Hl) | exact Hr |
+        exact (bst_insert_keys_lt id n l k Hkl Hcmp) | exact Hkr].
+    + constructor; [exact Hl | exact (IHr Hr) |
+        exact Hkl | exact (bst_insert_keys_gt id n r k Hkr Hcmp)].
+Qed.
+
+Transparent String.compare.
+
+Theorem build_bst_index_ordered : forall ac,
+    BST_ordered (build_bst_index ac).
+Proof.
+  intro ac. unfold build_bst_index.
+  exact (fold_left_preserves _ BST_ordered ac.(ac_nodes) BSTLeaf
+           BST_leaf
+           (fun t n H => bst_insert_preserves_ordered n.(node_id) n t H)).
+Qed.
+
+(* ================================================================== *)
+(* AVL-backed node index                                               *)
+(* ================================================================== *)
+
+Inductive NodeAVL : Type :=
+  | AVLLeaf : NodeAVL
+  | AVLNode : NodeAVL -> Id -> Node -> NodeAVL -> nat -> NodeAVL.
+
+Definition avl_height (t : NodeAVL) : nat :=
+  match t with AVLLeaf => 0 | AVLNode _ _ _ _ h => h end.
+
+Definition avl_mk (l : NodeAVL) (k : Id) (v : Node)
+    (r : NodeAVL) : NodeAVL :=
+  AVLNode l k v r (S (Nat.max (avl_height l) (avl_height r))).
+
+Definition avl_rot_right (t : NodeAVL) : NodeAVL :=
+  match t with
+  | AVLNode (AVLNode ll lk lv lr _) k v r _ =>
+    avl_mk ll lk lv (avl_mk lr k v r)
+  | _ => t
+  end.
+
+Definition avl_rot_left (t : NodeAVL) : NodeAVL :=
+  match t with
+  | AVLNode l k v (AVLNode rl rk rv rr _) _ =>
+    avl_mk (avl_mk l k v rl) rk rv rr
+  | _ => t
+  end.
+
+Definition avl_balance (l : NodeAVL) (k : Id) (v : Node)
+    (r : NodeAVL) : NodeAVL :=
+  let hl := avl_height l in
+  let hr := avl_height r in
+  if Nat.leb (hr + 2) hl then
+    match l with
+    | AVLNode ll _ _ lr _ =>
+      if Nat.leb (avl_height lr) (avl_height ll) then
+        avl_rot_right (avl_mk l k v r)
+      else avl_rot_right (avl_mk (avl_rot_left l) k v r)
+    | AVLLeaf => avl_mk l k v r
+    end
+  else if Nat.leb (hl + 2) hr then
+    match r with
+    | AVLNode rl _ _ rr _ =>
+      if Nat.leb (avl_height rl) (avl_height rr) then
+        avl_rot_left (avl_mk l k v r)
+      else avl_rot_left (avl_mk l k v (avl_rot_right r))
+    | AVLLeaf => avl_mk l k v r
+    end
+  else avl_mk l k v r.
+
+Fixpoint avl_insert (id : Id) (n : Node) (t : NodeAVL) : NodeAVL :=
+  match t with
+  | AVLLeaf => AVLNode AVLLeaf id n AVLLeaf 1
+  | AVLNode l k v r h =>
+    match String.compare id k with
+    | Lt => avl_balance (avl_insert id n l) k v r
+    | Eq => AVLNode l id n r h
+    | Gt => avl_balance l k v (avl_insert id n r)
+    end
+  end.
+
+Fixpoint avl_find (id : Id) (t : NodeAVL) : option Node :=
+  match t with
+  | AVLLeaf => None
+  | AVLNode l k v r _ =>
+    match String.compare id k with
+    | Lt => avl_find id l | Eq => Some v | Gt => avl_find id r
+    end
+  end.
+
+Definition build_avl_index (ac : AssuranceCase) : NodeAVL :=
+  fold_left (fun t n => avl_insert n.(node_id) n t)
+            ac.(ac_nodes) AVLLeaf.
+
+Definition find_node_avl (t : NodeAVL) (id : Id) : option Node :=
+  avl_find id t.
+
+(* --- In-order element list (rotation-invariant) --- *)
+
+Fixpoint avl_elements (t : NodeAVL) : list (Id * Node) :=
+  match t with
+  | AVLLeaf => []
+  | AVLNode l k v r _ => avl_elements l ++ [(k, v)] ++ avl_elements r
+  end.
+
+Lemma avl_rot_right_elements : forall t,
+    avl_elements (avl_rot_right t) = avl_elements t.
+Proof.
+  intros [|[|ll lk lv lr lh] k v r h]; try reflexivity.
+  simpl. rewrite !app_assoc. reflexivity.
+Qed.
+
+Lemma avl_rot_left_elements : forall t,
+    avl_elements (avl_rot_left t) = avl_elements t.
+Proof.
+  intros [|l k v [|rl rk rv rr rh] h]; try reflexivity.
+  simpl. rewrite !app_assoc. reflexivity.
+Qed.
+
+Lemma avl_balance_elements : forall l k v r,
+    avl_elements (avl_balance l k v r) =
+    avl_elements l ++ [(k, v)] ++ avl_elements r.
+Proof.
+  intros l k v r. unfold avl_balance.
+  destruct (Nat.leb (avl_height r + 2) (avl_height l)).
+  - destruct l as [|ll lk lv lr lh]; [reflexivity |].
+    destruct (Nat.leb (avl_height lr) (avl_height ll));
+      rewrite avl_rot_right_elements; simpl;
+      try rewrite avl_rot_left_elements; simpl;
+      rewrite !app_assoc; reflexivity.
+  - destruct (Nat.leb (avl_height l + 2) (avl_height r)).
+    + destruct r as [|rl rk rv rr rh]; [reflexivity |].
+      destruct (Nat.leb (avl_height rl) (avl_height rr));
+        rewrite avl_rot_left_elements; simpl;
+        try rewrite avl_rot_right_elements; simpl;
+        rewrite !app_assoc; reflexivity.
+    + reflexivity.
+Qed.
+
+(* --- AVL ordering invariant --- *)
+
+Inductive AVL_ordered : NodeAVL -> Prop :=
+  | AVLO_leaf : AVL_ordered AVLLeaf
+  | AVLO_node : forall l k v r h,
+      AVL_ordered l -> AVL_ordered r ->
+      (forall id n, avl_find id l = Some n ->
+        String.compare id k = Lt) ->
+      (forall id n, avl_find id r = Some n ->
+        String.compare id k = Gt) ->
+      AVL_ordered (AVLNode l k v r h).
+
+(* --- AVL balance invariant --- *)
+
+Inductive AVL_balanced : NodeAVL -> Prop :=
+  | AVLB_leaf : AVL_balanced AVLLeaf
+  | AVLB_node : forall l k v r h,
+      AVL_balanced l -> AVL_balanced r ->
+      h = S (Nat.max (avl_height l) (avl_height r)) ->
+      avl_height l <= avl_height r + 1 ->
+      avl_height r <= avl_height l + 1 ->
+      AVL_balanced (AVLNode l k v r h).
+
+(* --- Boolean refinement check (concrete cases) --- *)
+
+Definition check_avl_refines (ac : AssuranceCase) : bool :=
+  let t := build_avl_index ac in
+  forallb (fun n =>
+    match find_node_avl t n.(node_id), find_node ac n.(node_id) with
+    | Some n1, Some n2 =>
+      String.eqb n1.(node_id) n2.(node_id) &&
+      NodeKind_eqb n1.(node_kind) n2.(node_kind) &&
+      String.eqb n1.(node_claim_text) n2.(node_claim_text)
+    | None, None => true
+    | _, _ => false
+    end) ac.(ac_nodes).

@@ -435,3 +435,45 @@ Proof.
            d1.(ad_link_changes) d2.(ad_node_changes)
            (fold_left apply_node_change d1.(ad_node_changes) ac) Hdisj).
 Qed.
+
+(* ================================================================== *)
+(* Conflict freedom characterization                                   *)
+(* ================================================================== *)
+
+(** A delta is conflict-free when its node and link changes
+    commute pairwise — the general condition under which
+    composition distributes over application.
+    [deltas_disjoint] is the decidable witness. *)
+
+(** Conflict-free implies composition distributes. *)
+Corollary conflict_free_compose : forall ac d1 d2,
+    deltas_disjoint d1 d2 = true ->
+    deltas_disjoint d2 d1 = true ->
+    apply_delta ac (compose_deltas d1 d2) =
+    apply_delta (apply_delta ac d1) d2.
+Proof. intros. exact (apply_delta_compose_general ac d1 d2 H). Qed.
+
+(** Additive deltas are always disjoint (RemoveNode-free). *)
+Lemma additive_implies_disjoint : forall d1 d2,
+    additive_delta d2 = true ->
+    deltas_disjoint d1 d2 = true.
+Proof.
+  intros d1 d2 Hadd. unfold deltas_disjoint.
+  apply forallb_forall. intros lc _.
+  apply forallb_forall. intros nc Hnc.
+  unfold additive_delta in Hadd.
+  apply forallb_forall with (x := nc) in Hadd; [| exact Hnc].
+  destruct nc; [reflexivity | discriminate | reflexivity].
+Qed.
+
+(** Composition of two additive deltas. *)
+Corollary additive_additive_compose : forall ac d1 d2,
+    additive_delta d1 = true ->
+    additive_delta d2 = true ->
+    apply_delta ac (compose_deltas d1 d2) =
+    apply_delta (apply_delta ac d1) d2.
+Proof.
+  intros ac d1 d2 H1 H2.
+  exact (apply_delta_compose_general ac d1 d2
+           (additive_implies_disjoint d1 d2 H2)).
+Qed.

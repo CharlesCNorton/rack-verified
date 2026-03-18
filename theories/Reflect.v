@@ -775,6 +775,77 @@ Proof.
 Qed.
 
 (* ================================================================== *)
+(* Section 9b: Direct support-tree soundness (no user obligations)    *)
+(* ================================================================== *)
+
+(** [ComputationalSupportTree] captures exactly what
+    [check_support_tree] decides — no entailment, no ProofTerm
+    type matching. *)
+Inductive ComputationalSupportTree (ac : AssuranceCase) : Id -> Prop :=
+  | CST_Leaf : forall id n,
+      find_node ac id = Some n ->
+      n.(node_kind) = Solution ->
+      (match n.(node_evidence) with
+       | Some (ProofTerm _ _ _ _) => True
+       | Some (Certificate b _ v) => v b = true
+       | None => False
+       end) ->
+      ComputationalSupportTree ac id
+  | CST_Internal : forall id n (kids : list Id),
+      find_node ac id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      kids = supportedby_children ac id ->
+      kids <> [] ->
+      (forall kid, In kid kids -> ComputationalSupportTree ac kid) ->
+      ComputationalSupportTree ac id
+  | CST_Annotation : forall id n,
+      find_node ac id = Some n ->
+      (n.(node_kind) = Context \/
+       n.(node_kind) = Assumption \/
+       n.(node_kind) = Justification) ->
+      ComputationalSupportTree ac id.
+
+Lemma check_support_tree_go_direct : forall ac fuel id,
+    check_support_tree_go ac fuel id = true ->
+    ComputationalSupportTree ac id.
+Proof.
+  intros ac fuel. induction fuel as [|f IH]; intros id Hcheck.
+  - simpl in Hcheck. discriminate.
+  - simpl in Hcheck.
+    destruct (find_node ac id) as [n|] eqn:Hfind; [| discriminate].
+    destruct n.(node_kind) eqn:Hkind.
+    + destruct (supportedby_children ac id) as [|k ks] eqn:Hkids;
+        [discriminate |].
+      apply CST_Internal with n (k :: ks);
+        [exact Hfind | left; exact Hkind | symmetry; exact Hkids
+        | discriminate |].
+      intros kid Hkid. apply IH.
+      apply forallb_forall with (x := kid) in Hcheck; exact Hcheck || exact Hkid.
+    + destruct (supportedby_children ac id) as [|k ks] eqn:Hkids;
+        [discriminate |].
+      apply CST_Internal with n (k :: ks);
+        [exact Hfind | right; exact Hkind | symmetry; exact Hkids
+        | discriminate |].
+      intros kid Hkid. apply IH.
+      apply forallb_forall with (x := kid) in Hcheck; exact Hcheck || exact Hkid.
+    + apply CST_Leaf with n; [exact Hfind | exact Hkind |].
+      destruct n.(node_evidence) as [e|]; [| discriminate].
+      destruct e as [lbl P pf chk | b tool v]; [exact I | exact Hcheck].
+    + exact (CST_Annotation ac id n Hfind (or_introl Hkind)).
+    + exact (CST_Annotation ac id n Hfind (or_intror (or_introl Hkind))).
+    + exact (CST_Annotation ac id n Hfind (or_intror (or_intror Hkind))).
+Qed.
+
+(** Direct soundness: no entailment or evidence validity hypotheses. *)
+Theorem check_support_tree_direct : forall ac id,
+    check_support_tree ac id = true ->
+    ComputationalSupportTree ac id.
+Proof.
+  intros ac id.
+  exact (check_support_tree_go_direct ac (length ac.(ac_nodes)) id).
+Qed.
+
+(* ================================================================== *)
 (* Section 10: BFS reachability lemmas                                 *)
 (* ================================================================== *)
 
@@ -2007,12 +2078,11 @@ Qed.
 
 Theorem reachable_from_closed : forall ac start w v,
     no_dangling_links ac ->
-    NoDup (map node_id ac.(ac_nodes)) ->
     In w (reachable_from ac start) ->
     In v (supportedby_children ac w) ->
     In v (reachable_from ac start).
 Proof.
-  intros ac start w v Hnd _ Hw Hv.
+  intros ac start w v Hnd Hw Hv.
   unfold reachable_from in *.
   set (kids := supportedby_children ac start) in *.
   exact (rsf_result_closed ac (length ac.(ac_nodes)) kids kids Hnd
@@ -2032,26 +2102,24 @@ Qed.
     reachable_from_closed at each step. *)
 Lemma reaches_in_reachable_from : forall ac start w v,
     no_dangling_links ac ->
-    NoDup (map node_id ac.(ac_nodes)) ->
     In w (reachable_from ac start) ->
     Reaches ac w v ->
     In v (reachable_from ac start).
 Proof.
-  intros ac start w v Hnd Hnodup Hw Hreach.
+  intros ac start w v Hnd Hw Hreach.
   induction Hreach as [u0 v0 Hstep | u0 m v0 H1 IH1 H2 IH2].
-  - exact (reachable_from_closed ac start u0 v0 Hnd Hnodup Hw Hstep).
+  - exact (reachable_from_closed ac start u0 v0 Hnd Hw Hstep).
   - exact (IH2 (IH1 Hw)).
 Qed.
 
 (** Soundness of check_acyclic: if the BFS-based checker returns
-    true (and the graph has no dangling links and unique node IDs),
-    the graph is acyclic. *)
+    true and the graph has no dangling links, the graph is acyclic.
+    NoDup is not required — the BFS fuel bound uses missing_count. *)
 Lemma check_acyclic_sound : forall ac,
     no_dangling_links ac ->
-    NoDup (map node_id ac.(ac_nodes)) ->
     check_acyclic ac = true -> Acyclic ac.
 Proof.
-  intros ac Hnd Hnodup Hcheck id Hcycle.
+  intros ac Hnd Hcheck id Hcycle.
   (* From the cycle Reaches ac id id, extract a first step. *)
   destruct (reaches_first_step ac id id Hcycle) as [mid [Hmid Hrest]].
   (* mid is a SupportedBy child of id, hence in the initial
@@ -2083,7 +2151,7 @@ Proof.
       exact Hmid_in.
     - (* Reaches ac mid id: iterate reachable_from_closed *)
       exact (reaches_in_reachable_from ac id mid id
-               Hnd Hnodup Hmid_in Hreach_mid_id). }
+               Hnd Hmid_in Hreach_mid_id). }
   (* mem_string id (reachable_from ac id) = true *)
   assert (Hmem : mem_string id (reachable_from ac id) = true)
     by exact (In_mem_string id (reachable_from ac id) Hid_in).
@@ -2092,7 +2160,7 @@ Proof.
   rewrite Hmem in Hcheck. discriminate.
 Qed.
 
-(** Combined completeness. *)
+(** Combined completeness (with topo premise). *)
 Theorem diagnose_structural_complete : forall ac,
     diagnose_structural ac = [] ->
     verify_topo_order ac (topo_sort ac) = true ->
@@ -2116,4 +2184,19 @@ Proof.
             (check_no_dangling_correct ac
               (diagnose_dangling_nil_check ac Hdang)) Hctx).
   reflexivity.
+Qed.
+
+(** Self-contained completeness: no topo premise.
+    Uses [topo_sort_complete] to derive the topo order internally.
+    Requires [Acyclic ac], [NoDup], and [no_dangling_links]. *)
+Theorem diagnose_structural_complete_self : forall ac,
+    diagnose_structural ac = [] ->
+    Acyclic ac ->
+    NoDup (map node_id ac.(ac_nodes)) ->
+    no_dangling_links ac ->
+    structural_checks ac = true.
+Proof.
+  intros ac Hdiag Hacyc Hnd Hndl.
+  apply diagnose_structural_complete; [exact Hdiag |].
+  exact (topo_sort_complete ac Hacyc Hnd Hndl).
 Qed.

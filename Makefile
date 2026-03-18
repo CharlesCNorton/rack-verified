@@ -15,7 +15,12 @@ doc: all
 	  -R theories RACK \
 	  -d docs \
 	  theories/Core.v theories/Main.v theories/Reflect.v \
-	  theories/Export.v theories/Example.v
+	  theories/Export.v theories/Notation.v \
+	  theories/EvidenceClass.v theories/ProofIdentity.v \
+	  theories/Entailment.v theories/Trace.v \
+	  theories/Delta.v theories/Incremental.v \
+	  theories/ProductLine.v theories/Bridge.v \
+	  theories/CaseStudy.v theories/Example.v
 
 ocaml: extract
 	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml test_rack.ml -o test_rack || \
@@ -24,10 +29,15 @@ ocaml: extract
 	  ocamlopt -I +str str.cmxa rack.ml rack_util.ml rack_cli.ml -o rack_cli
 	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml test_rack_prop.ml -o test_rack_prop || \
 	  ocamlopt -I +str str.cmxa rack.ml rack_util.ml test_rack_prop.ml -o test_rack_prop
+	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml test_rack_extended.ml -o test_rack_extended || \
+	  ocamlopt -I +str str.cmxa rack.ml rack_util.ml test_rack_extended.ml -o test_rack_extended
+	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml rack_bench.ml -o rack_bench || \
+	  ocamlopt -I +str str.cmxa rack.ml rack_util.ml rack_bench.ml -o rack_bench
 
 test: ocaml
 	./test_rack
 	./test_rack_prop
+	./test_rack_extended
 
 vos: Makefile.coq
 	$(MAKE) -f Makefile.coq vos

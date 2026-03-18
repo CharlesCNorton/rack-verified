@@ -49,6 +49,17 @@ jobs:
               -R theories RACK \
               -d docs \
               theories/Core.v theories/Main.v theories/Reflect.v \
-              theories/Export.v theories/Example.v \
+              theories/Export.v theories/Notation.v \
+              theories/EvidenceClass.v theories/ProofIdentity.v \
+              theories/Entailment.v theories/Trace.v \
+              theories/Delta.v theories/Incremental.v \
+              theories/ProductLine.v theories/Bridge.v \
+              theories/CaseStudy.v theories/Example.v \
               || echo "coqdoc generation failed (non-fatal)"
             endGroup
+      - name: Upload coqdoc
+        if: github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coqdoc
+          path: docs/

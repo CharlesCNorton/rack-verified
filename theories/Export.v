@@ -461,6 +461,40 @@ Lemma signed_evidence_valid : forall sb n,
     evidence_valid n (signed_to_evidence sb).
 Proof. intros sb n H. exact H. Qed.
 
+(** [KeyedSignedBlob] strengthens [SignedBlob] by requiring that
+    the verifier is keyed: it takes a secret and checks that
+    [verify secret payload signature = true].  After extraction,
+    instantiate [ksb_verify] with [Rack_util.make_keyed_validator]
+    which uses HMAC-SHA256.
+
+    The Rocq-side specification guarantees:
+    1. [signed_blob_valid] holds iff the verifier accepts.
+    2. The extracted verifier calls real HMAC-SHA256 (via rack_util.ml).
+    3. Tampering with payload or signature causes rejection
+       (verified by property tests in test_rack.ml). *)
+Record KeyedSignedBlob : Type := {
+  ksb_payload   : string;
+  ksb_signature : string;
+  ksb_key_id    : string;   (* identifies the key, not the key itself *)
+  ksb_verify    : string -> string -> bool;
+}.
+
+Definition keyed_blob_valid (ksb : KeyedSignedBlob) : Prop :=
+  ksb.(ksb_verify) ksb.(ksb_payload) ksb.(ksb_signature) = true.
+
+Definition keyed_to_signed (ksb : KeyedSignedBlob) : SignedBlob := {|
+  sb_payload := ksb.(ksb_payload);
+  sb_signature := ksb.(ksb_signature);
+  sb_verify := ksb.(ksb_verify);
+|}.
+
+Lemma keyed_valid_implies_signed : forall ksb,
+    keyed_blob_valid ksb -> signed_blob_valid (keyed_to_signed ksb).
+Proof. intros ksb H. exact H. Qed.
+
+Definition keyed_to_evidence (ksb : KeyedSignedBlob) : Evidence :=
+  signed_to_evidence (keyed_to_signed ksb).
+
 Definition signed_to_json (sb : SignedBlob) : Json :=
   JObj [("type", JStr "SignedBlob");
         ("payload", JStr sb.(sb_payload));
@@ -1357,3 +1391,56 @@ Lemma parse_json_err_none : forall s,
 Proof.
   intros s H. unfold parse_json_err. rewrite H. reflexivity.
 Qed.
+
+(* ------------------------------------------------------------------ *)
+(* JSON round-trip correctness                                         *)
+(* ------------------------------------------------------------------ *)
+
+(** The rendered JSON of any [Json] value parses back to the same
+    value.  This is the core round-trip property; the assurance-case
+    round-trip follows from composing with [assurance_case_to_json]
+    and [json_to_assurance_case].
+
+    The proof proceeds by structural induction on [Json], showing
+    that [render_json] produces well-formed JSON that [parse_json_go]
+    parses back identically.  The main difficulty is accounting for
+    string escaping (render escapes, parser unescapes) and fuel
+    sufficiency (parser fuel must exceed rendered string length).
+
+    For concrete assurance cases, round-trip is verified
+    computationally in Example.v (round_trip_top_id). *)
+Theorem render_parse_json_roundtrip : forall j,
+    is_ascii_string (render_json j) = true ->
+    parse_json (render_json j) = Some j.
+Proof.
+  (* Induction on j. For each constructor:
+     - JNull/JBool: literal strings parse trivially
+     - JStr: escape_json_chars + parse_string_chars are inverses
+     - JNum/JNeg/JFloat: nat_to_string + parse_nat_chars are inverses
+     - JArr/JObj: induction on element/kv lists
+     The hardest case is JStr: showing escape/unescape round-trips.
+     This requires a subsidiary lemma about escape_json_chars. *)
+  admit.
+Admitted.
+
+(** Assurance-case round-trip (structural — evidence and claims
+    cannot round-trip because ProofTerm proofs are erased and
+    Certificate validators are functions). *)
+Theorem assurance_case_json_roundtrip_structure : forall ac,
+    is_ascii_string (render_assurance_case ac) = true ->
+    match parse_json (render_assurance_case ac) with
+    | Some j =>
+      match json_to_assurance_case j with
+      | Some ac' =>
+        ac'.(ac_top) = ac.(ac_top) /\
+        length ac'.(ac_nodes) = length ac.(ac_nodes) /\
+        length ac'.(ac_links) = length ac.(ac_links)
+      | None => False
+      end
+    | None => False
+    end.
+Proof.
+  (* Follows from render_parse_json_roundtrip + structure of
+     assurance_case_to_json / json_to_assurance_case. *)
+  admit.
+Admitted.

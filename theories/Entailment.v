@@ -234,3 +234,77 @@ Defined.
 (** When no typeclass instance fires, fall back to [vm_compute; tauto]. *)
 Global Hint Extern 10 (Entails _ _) =>
   intro; vm_compute; tauto : typeclass_instances.
+
+(* ================================================================== *)
+(* Hint database for domain-specific entailments                      *)
+(* ================================================================== *)
+
+(** [rack_entail] is a dedicated hint database for entailment lemmas.
+    Users register domain-specific entailment facts here so the
+    automation picks them up without modifying the core tactics.
+
+    Usage:
+      Hint Resolve my_domain_lemma : rack_entail.
+      (* Then solve_entailment_db fires automatically. *)
+*)
+Create HintDb rack_entail.
+
+(** Solver using the hint database. *)
+Ltac solve_entailment_db :=
+  match goal with
+  | |- fold_right and True ?children -> ?parent =>
+    first [ exact (entails_proof (children := children) (parent := parent))
+          | intro; eauto with rack_entail
+          | vm_compute; tauto
+          | vm_compute; intuition
+          | vm_compute; firstorder ]
+  end.
+
+(** Full wf_entailment solver with hint database support. *)
+Ltac solve_all_entailments_db :=
+  intros ? ? Hfind Hkind;
+  vm_compute in Hfind;
+  repeat match type of Hfind with
+  | (if ?c then _ else _) = _ =>
+      destruct c eqn:?;
+      [ injection Hfind as <-;
+        first [ solve_entailment_db
+              | vm_compute; tauto
+              | vm_compute; intuition
+              | vm_compute; firstorder
+              | exfalso; destruct Hkind as [? | ?]; discriminate ]
+      | ]
+  end;
+  try discriminate.
+
+(** Register standard entailment patterns in the hint database. *)
+Global Hint Resolve entails_identity : rack_entail.
+Global Hint Resolve entails_conj : rack_entail.
+Global Hint Resolve entails_conj3 : rack_entail.
+Global Hint Resolve entails_conj4 : rack_entail.
+Global Hint Resolve entails_conj5 : rack_entail.
+Global Hint Resolve entails_true : rack_entail.
+Global Hint Resolve entails_conj_all : rack_entail.
+Global Hint Resolve entails_weaken : rack_entail.
+
+(* ================================================================== *)
+(* Reflection-based partial decision procedure                        *)
+(* ================================================================== *)
+
+(** For entailments where all children are propositionally equal to
+    the parent, decide by syntactic identity.  This handles the
+    common case of pass-through claims without vm_compute. *)
+Ltac solve_entailment_reflect :=
+  match goal with
+  | |- fold_right and True ?children -> ?parent =>
+    let rec try_children cs :=
+      match cs with
+      | ?P :: ?rest =>
+        first [ unify P parent; exact (entails_identity parent)
+              | try_children rest ]
+      | _ => fail
+      end
+    in
+    first [ try_children children
+          | solve_entailment_db ]
+  end.
