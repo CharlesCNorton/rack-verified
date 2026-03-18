@@ -71,7 +71,7 @@ let () =
     | Some ac ->
       match !mode with
       | "check" ->
-        if check_well_formed ac then begin
+        if coq_bool_to_bool (check_well_formed ac) then begin
           Printf.printf "PASS: assurance case is well-formed\n";
           exit 0
         end else begin

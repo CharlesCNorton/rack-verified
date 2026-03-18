@@ -8,6 +8,7 @@ Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Arith.PeanoNat.
+Require Import Stdlib.NArith.BinNat.
 Import ListNotations.
 Open Scope string_scope.
 Open Scope list_scope.
@@ -258,6 +259,131 @@ Proof.
   - pose proof (String.compare_antisym s s) as Ha.
     rewrite H in Ha. simpl in Ha.
     rewrite Ha in H. discriminate.
+Qed.
+
+Lemma string_compare_eq : forall s1 s2,
+    String.compare s1 s2 = Eq -> s1 = s2.
+Proof. intros. apply String.compare_eq_iff. exact H. Qed.
+
+Lemma string_compare_lt_gt : forall s1 s2,
+    String.compare s1 s2 = Lt -> String.compare s2 s1 = Gt.
+Proof.
+  intros s1 s2 H.
+  pose proof (String.compare_antisym s1 s2) as Ha.
+  rewrite H in Ha. simpl in Ha.
+  destruct (String.compare s2 s1); simpl in Ha;
+    [discriminate | discriminate | reflexivity].
+Qed.
+
+Lemma string_compare_gt_lt : forall s1 s2,
+    String.compare s1 s2 = Gt -> String.compare s2 s1 = Lt.
+Proof.
+  intros s1 s2 H.
+  pose proof (String.compare_antisym s1 s2) as Ha.
+  rewrite H in Ha. simpl in Ha.
+  destruct (String.compare s2 s1); simpl in Ha;
+    [discriminate | reflexivity | discriminate].
+Qed.
+
+(* Ascii.compare transitivity via N.compare *)
+Lemma ascii_compare_trans : forall c (a b d : Ascii.ascii),
+    Ascii.compare a b = c ->
+    Ascii.compare b d = c ->
+    c <> Eq ->
+    Ascii.compare a d = c.
+Proof.
+  intros c a b d Hab Hbd Hne.
+  unfold Ascii.compare in *.
+  destruct c; [exfalso; exact (Hne eq_refl) | |].
+  - apply N.compare_lt_iff in Hab.
+    apply N.compare_lt_iff in Hbd.
+    apply N.compare_lt_iff.
+    exact (N.lt_trans _ _ _ Hab Hbd).
+  - apply N.compare_gt_iff in Hab.
+    apply N.compare_gt_iff in Hbd.
+    apply N.compare_gt_iff.
+    exact (N.lt_trans _ _ _ Hbd Hab).
+Qed.
+
+Lemma ascii_compare_refl : forall a, Ascii.compare a a = Eq.
+Proof.
+  intro a. unfold Ascii.compare. apply N.compare_refl.
+Qed.
+
+Lemma string_compare_unfold : forall a1 s1 a2 s2,
+    String.compare (String a1 s1) (String a2 s2) =
+    match Ascii.compare a1 a2 with
+    | Eq => String.compare s1 s2
+    | r => r
+    end.
+Proof. reflexivity. Qed.
+
+Lemma string_compare_trans : forall s1 s2 s3 c,
+    String.compare s1 s2 = c ->
+    String.compare s2 s3 = c ->
+    c <> Eq ->
+    String.compare s1 s3 = c.
+Proof.
+  induction s1 as [|a1 s1' IH]; intros s2 s3 c H12 H23 Hne.
+  - (* s1 = EmptyString *)
+    destruct s2 as [|a2 s2'].
+    + destruct s3 as [|a3 s3']; simpl in *.
+      * exfalso. apply Hne. symmetry. exact H12.
+      * subst c. discriminate.
+    + destruct s3 as [|a3 s3']; simpl in *.
+      * subst c. discriminate.
+      * exact H12.
+  - (* s1 = String a1 s1' *)
+    destruct s2 as [|a2 s2'].
+    { change (String.compare (String a1 s1') EmptyString) with Gt in H12.
+      subst c.
+      destruct s3 as [|a3 s3'].
+      - change (String.compare EmptyString EmptyString) with Eq in H23. discriminate.
+      - change (String.compare EmptyString (String a3 s3')) with Lt in H23. discriminate. }
+    destruct s3 as [|a3 s3'].
+    { change (String.compare (String a2 s2') EmptyString) with Gt in H23.
+      change (String.compare (String a1 s1') EmptyString) with Gt.
+      exact H23. }
+    rewrite string_compare_unfold in H12.
+    rewrite string_compare_unfold in H23.
+    rewrite string_compare_unfold.
+    destruct (Ascii.compare a1 a2) eqn:E12;
+    destruct (Ascii.compare a2 a3) eqn:E23.
+    + apply Ascii.compare_eq_iff in E12. subst a2.
+      apply Ascii.compare_eq_iff in E23. subst a3.
+      rewrite ascii_compare_refl. exact (IH s2' s3' c H12 H23 Hne).
+    + apply Ascii.compare_eq_iff in E12. subst a2.
+      rewrite E23. exact H23.
+    + apply Ascii.compare_eq_iff in E12. subst a2.
+      rewrite E23. exact H23.
+    + apply Ascii.compare_eq_iff in E23. subst a3.
+      rewrite E12. exact H12.
+    + subst c.
+      rewrite (ascii_compare_trans Lt a1 a2 a3 E12 E23 ltac:(discriminate)).
+      exact H23.
+    + subst c. discriminate.
+    + apply Ascii.compare_eq_iff in E23. subst a3.
+      rewrite E12. exact H12.
+    + subst c. discriminate.
+    + subst c.
+      rewrite (ascii_compare_trans Gt a1 a2 a3 E12 E23 ltac:(discriminate)).
+      exact H23.
+Qed.
+
+Lemma string_compare_trans_lt : forall s1 s2 s3,
+    String.compare s1 s2 = Lt ->
+    String.compare s2 s3 = Lt ->
+    String.compare s1 s3 = Lt.
+Proof.
+  intros. exact (string_compare_trans s1 s2 s3 Lt H H0 ltac:(discriminate)).
+Qed.
+
+Lemma string_compare_trans_gt : forall s1 s2 s3,
+    String.compare s1 s2 = Gt ->
+    String.compare s2 s3 = Gt ->
+    String.compare s1 s3 = Gt.
+Proof.
+  intros. exact (string_compare_trans s1 s2 s3 Gt H H0 ltac:(discriminate)).
 Qed.
 
 Opaque String.compare.

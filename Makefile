@@ -23,6 +23,8 @@ doc: all
 	  theories/CaseStudy.v theories/Example.v
 
 ocaml: extract
+	ocamlfind ocamlopt -package str -c rack.mli rack.ml rack_util.ml || \
+	  ocamlopt -I +str -c rack.mli rack.ml rack_util.ml
 	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml test_rack.ml -o test_rack || \
 	  ocamlopt -I +str str.cmxa rack.ml rack_util.ml test_rack.ml -o test_rack
 	ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml rack_cli.ml -o rack_cli || \

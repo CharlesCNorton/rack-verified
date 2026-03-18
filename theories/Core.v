@@ -53,6 +53,9 @@ Proof. destruct k; reflexivity. Qed.
 Lemma NodeKind_eqb_eq : forall a b, NodeKind_eqb a b = true <-> a = b.
 Proof. destruct a, b; simpl; split; intro; try reflexivity; try discriminate. Qed.
 
+Definition NodeKind_eq_dec : forall a b : NodeKind, {a = b} + {a <> b}.
+Proof. decide equality. Defined.
+
 (* Evidence must *witness* the node's own claim, not an arbitrary Prop. *)
 Inductive Evidence : Type :=
   (* A Rocq proof term whose type IS the node's claim.
@@ -84,6 +87,42 @@ Definition MetadataValue_eqb (a b : MetadataValue) : bool :=
   | MVTimestamp s1, MVTimestamp s2 => String.eqb s1 s2
   | _, _ => false
   end.
+
+Lemma MetadataValue_eqb_eq : forall a b,
+    MetadataValue_eqb a b = true <-> a = b.
+Proof.
+  intros [s1|n1|b1|s1] [s2|n2|b2|s2]; simpl;
+    split; intro H; try reflexivity; try discriminate.
+  - apply String.eqb_eq in H. subst. reflexivity.
+  - injection H as <-. apply String.eqb_refl.
+  - apply Nat.eqb_eq in H. subst. reflexivity.
+  - injection H as <-. apply Nat.eqb_refl.
+  - destruct b1, b2; try discriminate; reflexivity.
+  - injection H as <-. destruct b1; reflexivity.
+  - apply String.eqb_eq in H. subst. reflexivity.
+  - injection H as <-. apply String.eqb_refl.
+Qed.
+
+Definition MetadataValue_eq_dec : forall a b : MetadataValue, {a = b} + {a <> b}.
+Proof.
+  intros [s1|n1|b1|s1] [s2|n2|b2|s2]; try (right; discriminate).
+  - destruct (String.eqb s1 s2) eqn:E.
+    + left. apply String.eqb_eq in E. subst. reflexivity.
+    + right. intro H. injection H as <-.
+      rewrite String.eqb_refl in E. discriminate.
+  - destruct (Nat.eq_dec n1 n2) as [Heq | Hne].
+    + left. subst. reflexivity.
+    + right. intro H. injection H as <-. exact (Hne eq_refl).
+  - destruct b1, b2.
+    + left. reflexivity.
+    + right. discriminate.
+    + right. discriminate.
+    + left. reflexivity.
+  - destruct (String.eqb s1 s2) eqn:E.
+    + left. apply String.eqb_eq in E. subst. reflexivity.
+    + right. intro H. injection H as <-.
+      rewrite String.eqb_refl in E. discriminate.
+Defined.
 
 (** Extract the string content from any [MetadataValue]. *)
 Definition mv_as_string (v : MetadataValue) : string :=
@@ -153,6 +192,9 @@ Definition LinkKind_eqb (a b : LinkKind) : bool :=
 Lemma LinkKind_eqb_eq : forall a b, LinkKind_eqb a b = true <-> a = b.
 Proof. destruct a, b; simpl; split; intro; try reflexivity; try discriminate.
 Qed.
+
+Definition LinkKind_eq_dec : forall a b : LinkKind, {a = b} + {a <> b}.
+Proof. decide equality. Defined.
 
 Record Link : Type := {
   link_kind : LinkKind;

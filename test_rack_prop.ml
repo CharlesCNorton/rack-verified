@@ -167,7 +167,7 @@ let () =
   for i = 0 to n_trials - 1 do
     let depth = 1 + rand_int 4 in
     let ac = gen_well_formed_tree depth in
-    check (Printf.sprintf "wf_tree_%d" i) (check_well_formed ac)
+    check (Printf.sprintf "wf_tree_%d" i) (coq_bool_to_bool (check_well_formed ac))
   done;
 
   (* Property 2: well-formed trees pass structural_checks *)
@@ -175,7 +175,7 @@ let () =
   for i = 0 to n_trials - 1 do
     let depth = 1 + rand_int 4 in
     let ac = gen_well_formed_tree depth in
-    check (Printf.sprintf "struct_tree_%d" i) (structural_checks ac)
+    check (Printf.sprintf "struct_tree_%d" i) (coq_bool_to_bool (structural_checks ac))
   done;
 
   (* Property 3: check_well_formed = structural_checks *)
@@ -183,8 +183,8 @@ let () =
   for i = 0 to n_trials - 1 do
     let depth = 1 + rand_int 4 in
     let ac = gen_well_formed_tree depth in
-    let cwf = check_well_formed ac in
-    let sc = structural_checks ac in
+    let cwf = coq_bool_to_bool (check_well_formed ac) in
+    let sc = coq_bool_to_bool (structural_checks ac) in
     check (Printf.sprintf "agree_%d" i) (cwf = sc)
   done;
 
@@ -194,7 +194,7 @@ let () =
     let depth = 1 + rand_int 4 in
     let ac = gen_well_formed_tree depth in
     check (Printf.sprintf "support_%d" i)
-      (check_support_tree ac ac.ac_top)
+      (coq_bool_to_bool (check_support_tree ac ac.ac_top))
   done;
 
   (* Property 5: diagnose_all returns [] for well-formed cases *)
@@ -216,7 +216,7 @@ let () =
     let mut = mutations.(rand_int (Array.length mutations)) in
     let bad = mutate ac mut in
     check (Printf.sprintf "mutant_%d" i)
-      (not (check_well_formed bad))
+      (not (coq_bool_to_bool (check_well_formed bad)))
   done;
 
   (* Property 7: JSON round-trip preserves top ID *)
@@ -261,7 +261,7 @@ let () =
                  ac_links = rename_links "B_" ac2.ac_links;
                  ac_top = coq_of_string ("B_" ^ string_of_coq ac2.ac_top) } in
     let composed = compose_cases ac1' ac2' ac1'.ac_top in
-    check (Printf.sprintf "compose_%d" i) (check_well_formed composed)
+    check (Printf.sprintf "compose_%d" i) (coq_bool_to_bool (check_well_formed composed))
   done;
 
   (* Summary *)

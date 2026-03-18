@@ -8,6 +8,7 @@ From RACK Require Import Reflect.
 From RACK Require Import Export.
 From RACK Require Import Incremental.
 From RACK Require Import Delta.
+From RACK Require Import Trace.
 Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
@@ -843,13 +844,34 @@ Example mt_check_link :
 Require Extraction.
 Extraction Language OCaml.
 
-(* Extraction directives: wrap OCaml comparisons to return extracted bool *)
+(* Extraction directives: map nat to OCaml int for performance.
+   Peano nat is kept on the Rocq side for proofs; only the extracted
+   code switches to native integers.  All arithmetic, comparison,
+   and conversion functions are mapped to their OCaml equivalents. *)
+Extract Inductive nat => "int" ["0" "Stdlib.succ"]
+  "(fun fO fS n -> if n = 0 then fO () else fS (n - 1))".
+Extract Inlined Constant Nat.add => "(+)".
+Extract Inlined Constant Nat.mul => "( * )".
+Extract Inlined Constant Nat.sub => "(fun a b -> max 0 (a - b))".
+Extract Inlined Constant Nat.div => "(fun a b -> if b = 0 then 0 else a / b)".
+Extract Inlined Constant Nat.modulo => "(fun a b -> if b = 0 then a else a mod b)".
+Extract Inlined Constant Nat.max => "max".
+Extract Inlined Constant Nat.min => "min".
 Extract Inlined Constant Nat.eqb =>
   "(fun a b -> if a = b then True else False)".
 Extract Inlined Constant Nat.ltb =>
   "(fun a b -> if a < b then True else False)".
 Extract Inlined Constant Nat.leb =>
   "(fun a b -> if a <= b then True else False)".
+Extract Inlined Constant Nat.even =>
+  "(fun n -> if n mod 2 = 0 then True else False)".
+Extract Inlined Constant Nat.odd =>
+  "(fun n -> if n mod 2 <> 0 then True else False)".
+Extract Inlined Constant Nat.div2 => "(fun n -> n / 2)".
+Extract Inlined Constant Nat.testbit =>
+  "(fun a n -> if (a lsr n) land 1 <> 0 then True else False)".
+Extract Inlined Constant PeanoNat.Nat.eq_dec =>
+  "(fun a b -> if a = b then Left else Right)".
 
 Extraction "rack" render_assurance_case render_assurance_case_pretty
                    render_dot render_dot_with_options default_dot_options
@@ -881,4 +903,9 @@ Extraction "rack" render_assurance_case render_assurance_case_pretty
                    is_ascii_string string_ltb check_date_format
                    parse_json_err parse_ok parse_result_json
                    find_node_bst build_bst_index check_bst_refines
-                   additive_delta additive_node_change.
+                   additive_delta additive_node_change
+                   apply_delta apply_node_change apply_link_change
+                   compose_deltas empty_delta
+                   delta_affected_nodes delta_preserved_nodes
+                   delta_revalidation_needed
+                   invalidate_requirement invalidate_commit.

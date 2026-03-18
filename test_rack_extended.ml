@@ -172,13 +172,13 @@ let () =
   for _i = 0 to 9 do
     let ac = gen_well_formed_tree 3 in
     let tg = { tg_case = ac;
-      tg_requirements = Cons ({ req_id = coq_of_string "REQ-1" }, Nil);
+      tg_requirements = Cons ((coq_of_string "REQ-1"), Nil);
       tg_artifacts = Nil; tg_commits = Nil;
       tg_tool_runs = Nil; tg_owners = Nil;
       tg_trace_links = Cons ({ tl_kind = TL_Satisfies;
         tl_source = coq_of_string "REQ-1";
         tl_target = ac.ac_top }, Nil) } in
-    let iw = invalidate_requirement tg { req_id = coq_of_string "REQ-1" } in
+    let iw = invalidate_requirement tg (coq_of_string "REQ-1") in
     check (Printf.sprintf "trace_inval_%d" _i)
       (list_of_coq iw.iw_stale_nodes <> [])
   done;
@@ -189,7 +189,7 @@ let () =
     let ac = gen_well_formed_tree 2 in
     let tg = { tg_case = ac;
       tg_requirements = Nil; tg_artifacts = Nil;
-      tg_commits = Cons ({ cmt_id = coq_of_string "abc" }, Nil);
+      tg_commits = Cons ((coq_of_string "abc"), Nil);
       tg_tool_runs = Nil; tg_owners = Nil;
       tg_trace_links = Cons ({ tl_kind = TL_CommittedIn;
         tl_source = coq_of_string "src";
@@ -197,7 +197,7 @@ let () =
         Cons ({ tl_kind = TL_ImplementedBy;
           tl_source = ac.ac_top;
           tl_target = coq_of_string "src" }, Nil)) } in
-    let iw = invalidate_commit tg { cmt_id = coq_of_string "abc" } in
+    let iw = invalidate_commit tg (coq_of_string "abc") in
     check (Printf.sprintf "trace_commit_%d" _i)
       (list_of_coq iw.iw_stale_nodes <> [])
   done;

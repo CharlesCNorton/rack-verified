@@ -59,6 +59,15 @@ Definition TraceLinkKind_eqb (a b : TraceLinkKind) : bool :=
   | _, _ => false
   end.
 
+Lemma TraceLinkKind_eqb_eq : forall a b,
+    TraceLinkKind_eqb a b = true <-> a = b.
+Proof.
+  destruct a, b; simpl; split; intro; try reflexivity; try discriminate.
+Qed.
+
+Definition TraceLinkKind_eq_dec : forall a b : TraceLinkKind, {a = b} + {a <> b}.
+Proof. decide equality. Defined.
+
 Record TraceLink : Type := {
   tl_kind   : TraceLinkKind;
   tl_source : string;   (* source artifact/requirement ID *)
