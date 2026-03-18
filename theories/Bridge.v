@@ -128,6 +128,14 @@ Qed.
 (* Alloy bridge                                                        *)
 (* ================================================================== *)
 
+(** Structured counterexample shared across tool bridges. *)
+Record Counterexample : Type := {
+  cx_tool      : string;
+  cx_property  : string;
+  cx_witness   : string;
+  cx_timestamp : string;
+}.
+
 (** Alloy analysis results: structured relations, scopes, and
     counterexamples as semantically meaningful objects. *)
 
@@ -141,7 +149,7 @@ Record AlloyResult : Type := {
   ar_scope        : nat;       (* scope bound *)
   ar_outcome      : AlloyOutcome;
   ar_relations    : list (string * list (string * string));
-  ar_counterexample : option string; (* textual counterexample *)
+  ar_counterexample : option Counterexample;
   ar_solver       : string;    (* SAT solver used *)
   ar_time_ms      : nat;       (* analysis time *)
 }.
@@ -243,7 +251,7 @@ Record KaniResult : Type := {
   kr_unwind      : nat;
   kr_outcome     : KaniOutcome;
   kr_assumptions : list string;
-  kr_counterexample : option string;
+  kr_counterexample : option Counterexample;
   kr_time_ms     : nat;
 }.
 
