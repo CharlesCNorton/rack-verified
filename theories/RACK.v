@@ -213,31 +213,37 @@ Record WellFormed (ac : AssuranceCase) : Prop := {
 (* 7a. Decomposed well-foundedness lemmas                              *)
 (* ------------------------------------------------------------------ *)
 
-(* The reachable set of a node: everything it can reach, plus itself. *)
-Definition reachable_set (ac : AssuranceCase) (id : Id) : list Id :=
-  filter (fun x => String.eqb x id ||
-    (* We approximate: in the finite graph, reachability is bounded   *)
-    (* by graph membership. The measure only needs to be well-defined *)
-    (* and strictly decreasing; exact reachability is established     *)
-    (* propositionally in the lemmas below.                           *)
-    false)
-  (map node_id ac.(ac_nodes)).
+(* Height of a node in the support DAG, computed with bounded fuel.    *)
+(* Fuel 0 yields 0. Fuel S f yields 0 for leaves, and                 *)
+(* S(max children heights at fuel f) for internal nodes.               *)
+Fixpoint height_fuel (ac : AssuranceCase) (fuel : nat) (id : Id) : nat :=
+  match fuel with
+  | 0 => 0
+  | S f =>
+    match supportedby_children ac id with
+    | [] => 0
+    | k :: ks => S (fold_right Nat.max 0 (map (height_fuel ac f) (k :: ks)))
+    end
+  end.
 
-(* Measure: count of nodes from which id is reachable, plus one for  *)
-(* id itself. Any strict superset relation yields a strict decrease.  *)
-Definition measure (ac : AssuranceCase) (id : Id) : nat :=
-  length (filter (fun n => String.eqb n.(node_id) id)
-                 ac.(ac_nodes)).
+Arguments supportedby_children : simpl never.
 
-(* L1: Reachability is transitive (already given by R_Trans, but     *)
-(*     restated for the decomposition interface).                     *)
+Lemma height_fuel_S : forall ac f id,
+    height_fuel ac (S f) id =
+    match supportedby_children ac id with
+    | [] => 0
+    | k :: ks => S (fold_right Nat.max 0 (map (height_fuel ac f) (k :: ks)))
+    end.
+Proof. intros; reflexivity. Qed.
+
+(* L1: Reachability is transitive.                                     *)
 Lemma reaches_trans : forall ac u w v,
     Reaches ac u w -> Reaches ac w v -> Reaches ac u v.
 Proof.
   intros. exact (R_Trans ac u w v H H0).
 Qed.
 
-(* L2: A child is reachable from its parent in one step.             *)
+(* L2: A child is reachable from its parent in one step.              *)
 Lemma child_reaches : forall ac parent kid,
     In kid (supportedby_children ac parent) ->
     Reaches ac parent kid.
@@ -245,7 +251,7 @@ Proof.
   intros. exact (R_Step ac parent kid H).
 Qed.
 
-(* L3: Everything reachable from a child is reachable from parent.   *)
+(* L3: Everything reachable from a child is reachable from parent.    *)
 Lemma reachable_from_child : forall ac parent kid x,
     In kid (supportedby_children ac parent) ->
     Reaches ac kid x ->
@@ -257,7 +263,7 @@ Proof.
   - exact H0.
 Qed.
 
-(* L4: In an acyclic graph, a parent is NOT reachable from its child.*)
+(* L4: In an acyclic graph, a parent is NOT reachable from its child. *)
 Lemma acyclic_no_back_edge : forall ac parent kid,
     Acyclic ac ->
     In kid (supportedby_children ac parent) ->
@@ -268,35 +274,57 @@ Proof.
   exact (R_Trans ac parent kid parent (R_Step ac parent kid Hkid) Hback).
 Qed.
 
-(* L5: On a finite node list, reachability from a child is a strict  *)
-(*     subset of reachability from the parent (parent reaches child   *)
-(*     but not vice versa). This gives a nat measure that decreases.  *)
-Lemma child_measure_lt : forall ac parent kid,
-    WellFormed ac ->
-    In kid (supportedby_children ac parent) ->
-    (parent = ac.(ac_top) \/ Reaches ac ac.(ac_top) parent) ->
-    length ac.(ac_nodes) > 0 ->
-    exists m_p m_k : nat,
-      m_k < m_p.
-Admitted.
-
-(* L6: The child relation on a finite acyclic graph is accessible,   *)
-(*     proved by well-founded induction on the measure from L5.       *)
-Lemma acc_from_measure : forall ac id (m : nat),
-    WellFormed ac ->
-    (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->
-    m = length ac.(ac_nodes) ->
-    Acc (fun kid parent => In kid (supportedby_children ac parent)) id.
-Admitted.
-
-(* Assembly: child_rel_acc follows from the decomposed pieces.       *)
-Lemma child_rel_acc : forall ac id,
-    WellFormed ac ->
-    (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->
-    Acc (fun kid parent => In kid (supportedby_children ac parent)) id.
+(* Auxiliary: an element's image <= fold_right max over the list.      *)
+Lemma In_le_fold_max : forall (f : string -> nat) (x : string) (xs : list string),
+    In x xs -> f x <= fold_right Nat.max 0 (map f xs).
 Proof.
-  intros ac id HWF Hreach.
-  exact (acc_from_measure ac id (length ac.(ac_nodes)) HWF Hreach eq_refl).
+  intros f x xs Hin.
+  induction xs as [|y ys IH].
+  - destruct Hin.
+  - simpl. destruct Hin as [-> | Hin].
+    + apply Nat.le_max_l.
+    + apply Nat.le_trans with (fold_right Nat.max 0 (map f ys)).
+      * exact (IH Hin).
+      * apply Nat.le_max_r.
+Qed.
+
+(* Auxiliary: fold_right max bounded when all elements bounded.       *)
+Lemma fold_max_le : forall (f : string -> nat) (bound : nat) (xs : list string),
+    (forall x, In x xs -> f x <= bound) ->
+    fold_right Nat.max 0 (map f xs) <= bound.
+Proof.
+  intros f bound xs Hall.
+  induction xs as [|y ys IH]; simpl.
+  - apply Nat.le_0_l.
+  - apply Nat.max_lub.
+    + apply Hall. left. reflexivity.
+    + apply IH. intros z Hz. apply Hall. right. exact Hz.
+Qed.
+
+(* L5a: height_fuel is bounded by fuel.                                *)
+Lemma height_fuel_le : forall ac fuel id,
+    height_fuel ac fuel id <= fuel.
+Proof.
+  intros ac fuel. induction fuel as [|f IH]; intro id.
+  - reflexivity.
+  - rewrite height_fuel_S.
+    destruct (supportedby_children ac id) as [|k ks].
+    + apply Nat.le_0_l.
+    + apply le_n_S. apply fold_max_le.
+      intros x Hx. apply IH.
+Qed.
+
+(* L5b: A child's height at fuel f is < parent's at fuel (S f).       *)
+Lemma height_child_fuel : forall ac fuel id kid,
+    In kid (supportedby_children ac id) ->
+    height_fuel ac fuel kid < height_fuel ac (S fuel) id.
+Proof.
+  intros ac fuel id kid Hkid.
+  rewrite height_fuel_S.
+  destruct (supportedby_children ac id) as [|k ks] eqn:Hkids.
+  - destruct Hkid.
+  - apply le_n_S.
+    exact (In_le_fold_max (height_fuel ac fuel) kid (k :: ks) Hkid).
 Qed.
 
 Lemma children_reachable : forall ac id kid,
@@ -309,6 +337,45 @@ Proof.
   - right. apply R_Trans with id.
     + exact H.
     + apply R_Step. exact Hkid.
+Qed.
+
+(* L5c: Acc from fuel induction — if height < fuel, then Acc.         *)
+Lemma acc_by_fuel : forall ac fuel id,
+    WellFormed ac ->
+    (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->
+    height_fuel ac fuel id < fuel ->
+    Acc (fun kid parent => In kid (supportedby_children ac parent)) id.
+Proof.
+  intros ac fuel. induction fuel as [|fuel' IH]; intros id HWF Hreach Hlt.
+  - inversion Hlt.
+  - constructor. intros kid Hkid.
+    apply IH.
+    + exact HWF.
+    + exact (children_reachable ac id kid Hreach Hkid).
+    + pose proof (height_child_fuel ac fuel' id kid Hkid) as H1.
+      exact (Nat.lt_le_trans _ _ _ H1
+              (proj1 (Nat.lt_succ_r _ _) Hlt)).
+Qed.
+
+(* L5d: In a finite acyclic graph, height_fuel at fuel = |nodes| is   *)
+(*      strictly less than |nodes|. This is the path-length bound:     *)
+(*      no descending path in an acyclic graph on N nodes has more     *)
+(*      than N−1 edges, so height < N.                                 *)
+Lemma height_fuel_lt_nodes : forall ac id,
+    WellFormed ac ->
+    (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->
+    height_fuel ac (length (ac_nodes ac)) id < length (ac_nodes ac).
+Admitted.
+
+(* Assembly: child_rel_acc follows from acc_by_fuel + height bound.   *)
+Lemma child_rel_acc : forall ac id,
+    WellFormed ac ->
+    (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->
+    Acc (fun kid parent => In kid (supportedby_children ac parent)) id.
+Proof.
+  intros ac id HWF Hreach.
+  exact (acc_by_fuel ac (length (ac_nodes ac)) id HWF Hreach
+          (height_fuel_lt_nodes ac id HWF Hreach)).
 Qed.
 
 Lemma support_tree_of_reachable :
