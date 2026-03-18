@@ -1195,6 +1195,70 @@ Proof.
       * exact Hnd_acc.
 Qed.
 
+Theorem topo_sort_complete : forall ac,
+    Acyclic ac ->
+    NoDup (map node_id ac.(ac_nodes)) ->
+    forall x, In x (map node_id ac.(ac_nodes)) ->
+    In x (topo_sort ac).
+Proof.
+  intros ac Hacyc Hnd x Hx.
+  unfold topo_sort.
+  apply topo_sort_go_remaining;
+    [exact Hacyc | exact (fun id H => H) | exact Hnd
+    | rewrite length_map; apply Nat.le_refl | exact Hx].
+Qed.
+
+Theorem topo_sort_nodup : forall ac,
+    Acyclic ac ->
+    NoDup (map node_id ac.(ac_nodes)) ->
+    NoDup (topo_sort ac).
+Proof.
+  intros ac Hacyc Hnd. unfold topo_sort.
+  apply topo_sort_go_nodup;
+    [exact Hacyc | exact (fun id H => H) | exact Hnd
+    | exact (NoDup_nil Id) | intros x Hx; destruct Hx
+    | rewrite length_map; apply Nat.le_refl].
+Qed.
+
+Lemma topo_sort_go_subset : forall ac fuel remaining acc x,
+    In x (topo_sort_go ac fuel remaining acc) ->
+    In x acc \/ In x remaining.
+Proof.
+  intros ac fuel. induction fuel as [|f IH];
+    intros remaining acc x Hx; simpl in Hx.
+  - left. exact Hx.
+  - destruct (find _ remaining) as [id|] eqn:Hfind.
+    + apply IH in Hx. destruct Hx as [Hx | Hx].
+      * apply in_app_or in Hx. destruct Hx as [Hx | [<- | []]].
+        -- left. exact Hx.
+        -- right. exact (find_In _ _ _ Hfind).
+      * right. apply filter_remove_In in Hx. exact (proj1 Hx).
+    + left. exact Hx.
+Qed.
+
+Lemma topo_sort_subset : forall ac x,
+    In x (topo_sort ac) ->
+    In x (map node_id ac.(ac_nodes)).
+Proof.
+  intros ac x Hx. unfold topo_sort in Hx.
+  apply topo_sort_go_subset in Hx. destruct Hx as [Hx | Hx].
+  - destruct Hx.
+  - exact Hx.
+Qed.
+
+Theorem topo_sort_length : forall ac,
+    Acyclic ac ->
+    NoDup (map node_id ac.(ac_nodes)) ->
+    length (topo_sort ac) = length (map node_id ac.(ac_nodes)).
+Proof.
+  intros ac Hacyc Hnd.
+  apply Nat.le_antisymm.
+  - exact (nodup_incl_length (topo_sort ac) (map node_id ac.(ac_nodes))
+             (topo_sort_nodup ac Hacyc Hnd)
+             (topo_sort_subset ac)).
+  - exact (nodup_incl_length (map node_id ac.(ac_nodes)) (topo_sort ac)
+             Hnd (topo_sort_complete ac Hacyc Hnd)).
+Qed.
 
 (* ------------------------------------------------------------------ *)
 (* Identity entailment checker (partial decision procedure)             *)
@@ -1375,6 +1439,59 @@ Definition check_defeaters (ac : AssuranceCase) : bool :=
     defeater checking is an additional CI-time validation. *)
 Definition check_well_formed (ac : AssuranceCase) : bool :=
   structural_checks ac && check_defeaters ac.
+
+(** [check_well_formed] implies [structural_checks]. *)
+Lemma check_well_formed_structural : forall ac,
+    check_well_formed ac = true -> structural_checks ac = true.
+Proof.
+  intros ac H. unfold check_well_formed in H.
+  apply Bool.andb_true_iff in H. exact (proj1 H).
+Qed.
+
+(** [structural_checks] + [check_defeaters] = [check_well_formed]. *)
+Lemma structural_defeaters_well_formed : forall ac,
+    structural_checks ac = true ->
+    check_defeaters ac = true ->
+    check_well_formed ac = true.
+Proof.
+  intros ac Hs Hd. unfold check_well_formed.
+  rewrite Hs, Hd. reflexivity.
+Qed.
+
+(** [well_typed_defeater_links] follows from [check_context_links]. *)
+Lemma check_context_links_defeaters : forall ac,
+    check_context_links ac = true ->
+    well_typed_defeater_links ac.
+Proof.
+  intros ac H l Hin Hkind.
+  unfold check_context_links in H.
+  apply forallb_forall with (x := l) in H; [| exact Hin].
+  rewrite Hkind in H.
+  destruct (find_node ac l.(link_to)) as [nt|]; [| discriminate].
+  exists nt. split; [reflexivity |].
+  destruct nt.(node_kind); try discriminate;
+    [left | right]; reflexivity.
+Qed.
+
+(** [check_defeaters] soundness: if it passes, every defeater link
+    has a resolved counter-argument. *)
+Definition defeaters_resolved (ac : AssuranceCase) : Prop :=
+  forall l, In l ac.(ac_links) ->
+    l.(link_kind) = Defeater ->
+    exists kid, In kid (supportedby_children ac l.(link_from)) /\
+      check_support_tree_go ac (length ac.(ac_nodes)) kid = true.
+
+Lemma check_defeaters_sound : forall ac,
+    check_defeaters ac = true -> defeaters_resolved ac.
+Proof.
+  intros ac H l Hin Hkind. unfold check_defeaters in H.
+  apply forallb_forall with (x := l) in H; [| exact Hin].
+  rewrite Hkind in H. unfold defeater_resolved in H.
+  destruct (supportedby_children ac l.(link_from)) as [|k ks] eqn:Hkids;
+    [discriminate |].
+  apply existsb_exists in H. destruct H as [kid [Hkin Hcheck]].
+  exists kid. split; [exact Hkin | exact Hcheck].
+Qed.
 
 (* Compute an inspectable witness (if one exists). *)
 Fixpoint compute_support_witness_go (ac : AssuranceCase) (fuel : nat)

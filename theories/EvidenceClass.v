@@ -183,6 +183,18 @@ Proof.
   rewrite Hk in H. exact H.
 Qed.
 
+Lemma check_all_fresh_complete : forall ac now,
+    (forall n, In n ac.(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      node_evidence_fresh n now = true) ->
+    check_all_fresh ac now = true.
+Proof.
+  intros ac now H. unfold check_all_fresh.
+  apply forallb_forall. intros n Hin.
+  destruct n.(node_kind) eqn:Hk; try reflexivity.
+  exact (H n Hin Hk).
+Qed.
+
 (* ================================================================== *)
 (* Evidence class-specific well-formedness                             *)
 (* ================================================================== *)
@@ -215,6 +227,19 @@ Definition check_class_trust (ac : AssuranceCase) : bool :=
       class_trust_ok (classify_evidence e) (node_trust_envelope n)
     | _, _ => true
     end) ac.(ac_nodes).
+
+Lemma check_class_trust_sound : forall ac,
+    check_class_trust ac = true ->
+    forall n, In n ac.(ac_nodes) ->
+    forall e, n.(node_kind) = Solution ->
+    n.(node_evidence) = Some e ->
+    class_trust_ok (classify_evidence e) (node_trust_envelope n) = true.
+Proof.
+  intros ac H n Hin e Hk He.
+  unfold check_class_trust in H.
+  apply forallb_forall with (x := n) in H; [| exact Hin].
+  rewrite Hk, He in H. exact H.
+Qed.
 
 (* ================================================================== *)
 (* Admissibility: combining structural + freshness + class trust       *)

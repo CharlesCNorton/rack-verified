@@ -185,6 +185,16 @@ Proof.
       * exact (IH Hin Hnd').
 Qed.
 
+Lemma registries_consistent_refl : forall r,
+    NoDup (map pi_theorem_name r) ->
+    registries_consistent r r = true.
+Proof.
+  intros r Hnd. unfold registries_consistent.
+  apply forallb_forall. intros pi Hin.
+  rewrite (In_find_proof_id pi r Hin Hnd).
+  apply String.eqb_refl.
+Qed.
+
 (** [registries_consistent] is symmetric when the target registry
     has unique theorem names. *)
 Lemma registries_consistent_sym : forall r1 r2,

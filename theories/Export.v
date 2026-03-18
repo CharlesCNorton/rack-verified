@@ -1009,6 +1009,39 @@ Definition hydrate_evidence (ac : AssuranceCase)
   ac_top := ac.(ac_top);
 |}.
 
+(** Hydrate preserves links and top. *)
+Lemma hydrate_evidence_links : forall ac em,
+    (hydrate_evidence ac em).(ac_links) = ac.(ac_links).
+Proof. reflexivity. Qed.
+
+Lemma hydrate_evidence_top : forall ac em,
+    (hydrate_evidence ac em).(ac_top) = ac.(ac_top).
+Proof. reflexivity. Qed.
+
+Lemma hydrate_evidence_list_length : forall nodes em,
+    length (hydrate_evidence_list nodes em) = length nodes.
+Proof.
+  induction nodes as [|n ns IH]; intro em; simpl.
+  - reflexivity.
+  - f_equal. exact (IH em).
+Qed.
+
+Lemma hydrate_evidence_list_ids : forall nodes em,
+    map node_id (hydrate_evidence_list nodes em) = map node_id nodes.
+Proof.
+  induction nodes as [|n ns IH]; intro em; simpl.
+  - reflexivity.
+  - f_equal. exact (IH em).
+Qed.
+
+Lemma hydrate_evidence_list_kinds : forall nodes em,
+    map node_kind (hydrate_evidence_list nodes em) = map node_kind nodes.
+Proof.
+  induction nodes as [|n ns IH]; intro em; simpl.
+  - reflexivity.
+  - f_equal. exact (IH em).
+Qed.
+
 (* ------------------------------------------------------------------ *)
 (* Auto-hydrate from a validator registry                               *)
 (* ------------------------------------------------------------------ *)
@@ -1051,6 +1084,27 @@ Definition auto_hydrate (ac : AssuranceCase)
   ac_links := ac.(ac_links);
   ac_top := ac.(ac_top);
 |}.
+
+Lemma auto_hydrate_links : forall ac reg,
+    (auto_hydrate ac reg).(ac_links) = ac.(ac_links).
+Proof. reflexivity. Qed.
+
+Lemma auto_hydrate_top : forall ac reg,
+    (auto_hydrate ac reg).(ac_top) = ac.(ac_top).
+Proof. reflexivity. Qed.
+
+Lemma auto_hydrate_list_ids : forall nodes reg,
+    map node_id (auto_hydrate_list nodes reg) = map node_id nodes.
+Proof.
+  induction nodes as [|n ns IH]; intro reg; simpl.
+  - reflexivity.
+  - f_equal; [| exact (IH reg)].
+    destruct n.(node_kind); try reflexivity.
+    destruct n.(node_evidence); try reflexivity.
+    destruct (find_metadata _ _) as [[s1|?|?|?]|]; try reflexivity.
+    destruct (find_metadata _ _) as [[s2|?|?|?]|]; try reflexivity.
+    destruct (registry_lookup _ _); reflexivity.
+Qed.
 
 (* ------------------------------------------------------------------ *)
 (* Claim registry: rebuild claims after JSON import                     *)
@@ -1102,6 +1156,38 @@ Definition rebuild_claims (ac : AssuranceCase)
   ac_links := ac.(ac_links);
   ac_top := ac.(ac_top);
 |}.
+
+Lemma rebuild_claims_list_ids : forall nodes reg,
+    map node_id (rebuild_claims_list nodes reg) = map node_id nodes.
+Proof.
+  induction nodes as [|n ns IH]; intro reg; simpl.
+  - reflexivity.
+  - f_equal. exact (IH reg).
+Qed.
+
+Lemma rebuild_claims_list_kinds : forall nodes reg,
+    map node_kind (rebuild_claims_list nodes reg) = map node_kind nodes.
+Proof.
+  induction nodes as [|n ns IH]; intro reg; simpl.
+  - reflexivity.
+  - f_equal. exact (IH reg).
+Qed.
+
+Lemma rebuild_claims_list_evidence : forall nodes reg,
+    map node_evidence (rebuild_claims_list nodes reg) = map node_evidence nodes.
+Proof.
+  induction nodes as [|n ns IH]; intro reg; simpl.
+  - reflexivity.
+  - f_equal. exact (IH reg).
+Qed.
+
+Lemma rebuild_claims_links : forall ac reg,
+    (rebuild_claims ac reg).(ac_links) = ac.(ac_links).
+Proof. reflexivity. Qed.
+
+Lemma rebuild_claims_top : forall ac reg,
+    (rebuild_claims ac reg).(ac_top) = ac.(ac_top).
+Proof. reflexivity. Qed.
 
 (* ------------------------------------------------------------------ *)
 (* Fold-based streaming export                                          *)
