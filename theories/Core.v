@@ -36,16 +36,27 @@ Inductive NodeKind : Type :=
 (* Evidence must *witness* the node's own claim, not an arbitrary Prop. *)
 Inductive Evidence : Type :=
   (* A Rocq proof term whose type IS the node's claim.
-     The string label survives extraction, identifying what was proved. *)
-  | ProofTerm  : string -> forall (P : Prop), P -> Evidence
-  (* External certificate: a raw blob plus a decidable validator *)
-  | Certificate : string -> (string -> bool) -> Evidence.
+     The string label survives extraction, identifying what was proved.
+     The optional (unit -> bool) is a runtime re-checker that survives
+     extraction — call it to re-verify validity without the erased proof. *)
+  | ProofTerm  : string -> forall (P : Prop), P -> option (unit -> bool) -> Evidence
+  (* External certificate: raw blob, tool identifier, decidable validator.
+     tool_id names the originating tool (e.g. "SAW", "CBMC", "fuzz")
+     so the extracted code can dispatch to the right FFI validator.       *)
+  | Certificate : string -> string -> (string -> bool) -> Evidence.
 
 Record Node : Type := {
   node_id         : Id;
   node_kind       : NodeKind;
   node_claim_text : string;   (* human-readable claim — survives extraction *)
   node_evidence   : option Evidence;
+  node_metadata   : list (string * string);
+      (* Key-value annotations.  Conventions:
+         ("confidence", "0.95")  — numeric confidence score
+         ("weight",     "high")  — priority / importance
+         ("timestamp",  "2026-03-18T12:00:00Z") — creation time
+         ("valid_until","2027-03-18")            — expiration
+         ("author",     "SAW")                   — originating tool/person  *)
   node_claim      : Prop;     (* logical claim — erased at extraction *)
 }.
 
@@ -130,8 +141,8 @@ Definition Acyclic (ac : AssuranceCase) : Prop :=
 
 Definition evidence_valid (n : Node) (e : Evidence) : Prop :=
   match e with
-  | ProofTerm _ P _   => P = n.(node_claim)
-  | Certificate b v => v b = true
+  | ProofTerm _ P _ _ => P = n.(node_claim)
+  | Certificate b _ v => v b = true
   end.
 
 (* After extraction, ProofTerm's Prop and proof witness are erased;
@@ -140,9 +151,54 @@ Definition evidence_valid (n : Node) (e : Evidence) : Prop :=
    Use this for audit trails and inspectable witness trees.            *)
 Definition evidence_label (e : Evidence) : string :=
   match e with
-  | ProofTerm lbl _ _ => lbl
-  | Certificate blob _ => blob
+  | ProofTerm lbl _ _ _ => lbl
+  | Certificate blob _ _ => blob
   end.
+
+(* Runtime re-check: call the optional thunk if present.
+   Returns true for ProofTerm without a runtime checker (trust the type
+   system), true for Certificate if the validator passes, false otherwise.
+   Survives extraction — use this in CI gates and audit tooling.           *)
+Definition evidence_runtime_check (e : Evidence) : bool :=
+  match e with
+  | ProofTerm _ _ _ (Some f) => f tt
+  | ProofTerm _ _ _ None     => true
+  | Certificate b _ v        => v b
+  end.
+
+(* Tool identifier for external evidence.
+   Returns EmptyString for ProofTerm (Rocq itself is the "tool").        *)
+Definition evidence_tool (e : Evidence) : string :=
+  match e with
+  | ProofTerm _ _ _ _  => EmptyString
+  | Certificate _ t _  => t
+  end.
+
+(* ------------------------------------------------------------------ *)
+(* Metadata helpers                                                      *)
+(* ------------------------------------------------------------------ *)
+
+Fixpoint find_metadata (key : string) (md : list (string * string))
+  : option string :=
+  match md with
+  | [] => None
+  | (k, v) :: rest =>
+    if String.eqb k key then Some v
+    else find_metadata key rest
+  end.
+
+Definition has_metadata_key (key : string) (md : list (string * string))
+  : bool :=
+  match find_metadata key md with Some _ => true | None => false end.
+
+Definition node_timestamp (n : Node) : option string :=
+  find_metadata "timestamp" n.(node_metadata).
+
+Definition node_confidence (n : Node) : option string :=
+  find_metadata "confidence" n.(node_metadata).
+
+Definition node_weight (n : Node) : option string :=
+  find_metadata "weight" n.(node_metadata).
 
 Definition solution_discharged (n : Node) : Prop :=
   n.(node_kind) = Solution ->
@@ -357,8 +413,8 @@ Definition check_discharged (ac : AssuranceCase) : bool :=
       match n.(node_kind) with
       | Solution =>
         match n.(node_evidence) with
-        | Some (Certificate b v) => v b
-        | Some (ProofTerm _ _ _) => true
+        | Some (Certificate b _ v) => v b
+        | Some (ProofTerm _ _ _ _) => true
         | None => false
         end
       | Goal | Strategy =>
@@ -388,8 +444,8 @@ Definition check_all_discharged (ac : AssuranceCase) : bool :=
     match n.(node_kind) with
     | Solution =>
       match n.(node_evidence) with
-      | Some (Certificate b v) => v b
-      | Some (ProofTerm _ _ _) => true
+      | Some (Certificate b _ v) => v b
+      | Some (ProofTerm _ _ _ _) => true
       | None => false
       end
     | Goal | Strategy =>
@@ -573,8 +629,8 @@ Fixpoint check_support_tree_go (ac : AssuranceCase) (fuel : nat)
       match n.(node_kind) with
       | Solution =>
         match n.(node_evidence) with
-        | Some (ProofTerm _ _ _) => true
-        | Some (Certificate b v) => v b
+        | Some (ProofTerm _ _ _ _) => true
+        | Some (Certificate b _ v) => v b
         | None => false
         end
       | Context | Assumption | Justification => true
@@ -605,8 +661,8 @@ Fixpoint compute_support_witness_go (ac : AssuranceCase) (fuel : nat)
         match n.(node_evidence) with
         | Some e =>
           let valid := match e with
-            | ProofTerm _ _ _ => true
-            | Certificate b v => v b
+            | ProofTerm _ _ _ _ => true
+            | Certificate b _ v => v b
             end in
           if valid then Some (SW_Leaf id (evidence_label e)) else None
         | None => None
@@ -636,3 +692,199 @@ Fixpoint compute_support_witness_go (ac : AssuranceCase) (fuel : nat)
 Definition compute_support_witness (ac : AssuranceCase)
     (id : Id) : option SupportWitness :=
   compute_support_witness_go ac (length ac.(ac_nodes)) id.
+
+(* ------------------------------------------------------------------ *)
+(* Diagnostic error reporting                                           *)
+(* ------------------------------------------------------------------ *)
+
+(* Structured errors identifying the failing node or link.              *)
+Inductive CheckError : Type :=
+  | ErrTopNotGoal       : Id -> CheckError
+  | ErrDanglingFrom     : Id -> Id -> CheckError
+  | ErrDanglingTo       : Id -> Id -> CheckError
+  | ErrDuplicateId      : Id -> CheckError
+  | ErrUnsupported      : Id -> CheckError   (* Goal/Strategy with no children *)
+  | ErrMissingEvidence  : Id -> CheckError   (* Solution with no evidence *)
+  | ErrInvalidEvidence  : Id -> CheckError   (* Certificate validator fails *)
+  | ErrBadContextSource : Id -> Id -> CheckError   (* InContextOf from wrong kind *)
+  | ErrBadContextTarget : Id -> Id -> CheckError   (* InContextOf to wrong kind *)
+  | ErrCycle            : Id -> CheckError.
+
+Definition diagnose_top (ac : AssuranceCase) : list CheckError :=
+  match find_node ac ac.(ac_top) with
+  | Some n => match n.(node_kind) with Goal => [] | _ => [ErrTopNotGoal ac.(ac_top)] end
+  | None => [ErrTopNotGoal ac.(ac_top)]
+  end.
+
+Definition diagnose_dangling (ac : AssuranceCase) : list CheckError :=
+  flat_map (fun l =>
+    (match find_node ac l.(link_from) with
+     | Some _ => []
+     | None => [ErrDanglingFrom l.(link_from) l.(link_to)]
+     end) ++
+    (match find_node ac l.(link_to) with
+     | Some _ => []
+     | None => [ErrDanglingTo l.(link_from) l.(link_to)]
+     end))
+    ac.(ac_links).
+
+Definition diagnose_unique_ids (ac : AssuranceCase) : list CheckError :=
+  let fix go (seen : list Id) (nodes : list Node) : list CheckError :=
+    match nodes with
+    | [] => []
+    | n :: rest =>
+      if mem_string n.(node_id) seen
+      then ErrDuplicateId n.(node_id) :: go seen rest
+      else go (n.(node_id) :: seen) rest
+    end
+  in go [] ac.(ac_nodes).
+
+Definition diagnose_discharged (ac : AssuranceCase) : list CheckError :=
+  flat_map (fun n =>
+    match n.(node_kind) with
+    | Goal | Strategy =>
+      match supportedby_children ac n.(node_id) with
+      | [] => [ErrUnsupported n.(node_id)]
+      | _ => []
+      end
+    | Solution =>
+      match n.(node_evidence) with
+      | None => [ErrMissingEvidence n.(node_id)]
+      | Some (ProofTerm _ _ _ _) => []
+      | Some (Certificate b _ v) =>
+        if v b then [] else [ErrInvalidEvidence n.(node_id)]
+      end
+    | _ => []
+    end) ac.(ac_nodes).
+
+Definition diagnose_context_links (ac : AssuranceCase) : list CheckError :=
+  flat_map (fun l =>
+    match l.(link_kind) with
+    | SupportedBy => []
+    | InContextOf =>
+      let src_err :=
+        match find_node ac l.(link_from) with
+        | Some nf =>
+          match nf.(node_kind) with
+          | Goal | Strategy => []
+          | _ => [ErrBadContextSource l.(link_from) l.(link_to)]
+          end
+        | None => []
+        end in
+      let tgt_err :=
+        match find_node ac l.(link_to) with
+        | Some nt =>
+          match nt.(node_kind) with
+          | Context | Assumption | Justification => []
+          | _ => [ErrBadContextTarget l.(link_from) l.(link_to)]
+          end
+        | None => []
+        end in
+      src_err ++ tgt_err
+    end) ac.(ac_links).
+
+Definition diagnose_acyclic (ac : AssuranceCase) : list CheckError :=
+  filter (fun _ => true)
+    (flat_map (fun n =>
+      if mem_string n.(node_id) (reachable_from ac n.(node_id))
+      then [ErrCycle n.(node_id)]
+      else []) ac.(ac_nodes)).
+
+Definition diagnose_all (ac : AssuranceCase) : list CheckError :=
+  diagnose_top ac ++
+  diagnose_dangling ac ++
+  diagnose_unique_ids ac ++
+  diagnose_discharged ac ++
+  diagnose_context_links ac ++
+  diagnose_acyclic ac.
+
+(* ------------------------------------------------------------------ *)
+(* Incremental / single-element checkers                                *)
+(* ------------------------------------------------------------------ *)
+
+(* Check a single node in isolation: kind-specific structural rules.    *)
+Definition check_node (ac : AssuranceCase) (id : Id) : bool :=
+  match find_node ac id with
+  | None => false
+  | Some n =>
+    match n.(node_kind) with
+    | Solution =>
+      match n.(node_evidence) with
+      | Some (ProofTerm _ _ _ _) => true
+      | Some (Certificate b _ v) => v b
+      | None => false
+      end
+    | Goal | Strategy =>
+      negb (match supportedby_children ac id with [] => true | _ => false end)
+    | _ => true
+    end
+  end.
+
+(* Check a single link: both endpoints exist, context-link typing.      *)
+Definition check_link (ac : AssuranceCase) (l : Link) : bool :=
+  match find_node ac l.(link_from), find_node ac l.(link_to) with
+  | Some nf, Some nt =>
+    match l.(link_kind) with
+    | SupportedBy => true
+    | InContextOf =>
+      (match nf.(node_kind) with Goal | Strategy => true | _ => false end) &&
+      (match nt.(node_kind) with
+       | Context | Assumption | Justification => true | _ => false end)
+    end
+  | _, _ => false
+  end.
+
+(* Diagnose a single node — returns a list (possibly empty) of errors. *)
+Definition diagnose_node (ac : AssuranceCase) (id : Id)
+  : list CheckError :=
+  match find_node ac id with
+  | None => [ErrDanglingFrom id id]
+  | Some n =>
+    match n.(node_kind) with
+    | Solution =>
+      match n.(node_evidence) with
+      | None => [ErrMissingEvidence id]
+      | Some (ProofTerm _ _ _ _) => []
+      | Some (Certificate b _ v) =>
+        if v b then [] else [ErrInvalidEvidence id]
+      end
+    | Goal | Strategy =>
+      match supportedby_children ac id with
+      | [] => [ErrUnsupported id]
+      | _ => []
+      end
+    | _ => []
+    end
+  end.
+
+(* ------------------------------------------------------------------ *)
+(* Validator registries (for FFI bridging after extraction)              *)
+(* ------------------------------------------------------------------ *)
+
+(* A ValidatorEntry maps a tool identifier to a validator function.
+   After extraction, the validator is an OCaml (string -> bool) that
+   can call real crypto libraries.                                      *)
+Record ValidatorEntry : Type := {
+  ve_tool      : string;
+  ve_validator : string -> bool;
+}.
+
+Definition ValidatorRegistry := list ValidatorEntry.
+
+Fixpoint registry_lookup (tool : string) (reg : ValidatorRegistry)
+  : option (string -> bool) :=
+  match reg with
+  | [] => None
+  | entry :: rest =>
+    if String.eqb entry.(ve_tool) tool
+    then Some entry.(ve_validator)
+    else registry_lookup tool rest
+  end.
+
+(* Build Certificate evidence from a registry lookup.                   *)
+Definition make_certificate (tool blob : string) (reg : ValidatorRegistry)
+  : option Evidence :=
+  match registry_lookup tool reg with
+  | Some v => Some (Certificate blob tool v)
+  | None => None
+  end.

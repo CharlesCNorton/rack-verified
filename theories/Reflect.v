@@ -760,3 +760,302 @@ Lemma check_support_tree_sound : forall ac id,
 Proof.
   intros ac id. exact (check_support_tree_go_sound ac (length ac.(ac_nodes)) id).
 Qed.
+
+(* ================================================================== *)
+(* Section 10: BFS reachability lemmas                                 *)
+(* ================================================================== *)
+
+(* Monotonicity: the accumulator is always a subset of the result.     *)
+Lemma rsf_acc_subset : forall ac fuel frontier acc x,
+    In x acc ->
+    In x (reachable_set_fuel ac fuel frontier acc).
+Proof.
+  intros ac fuel. induction fuel as [|f IH]; intros frontier acc x Hin; simpl.
+  - exact Hin.
+  - remember (filter (fun id => negb (mem_string id acc))
+               (flat_map (supportedby_children ac) frontier)) as fresh.
+    destruct fresh as [|h t].
+    + exact Hin.
+    + apply IH. apply in_or_app. left. exact Hin.
+Qed.
+
+(* Children of frontier nodes are in the result (given fuel > 0).      *)
+Lemma rsf_frontier_child : forall ac f frontier acc x y,
+    In x frontier ->
+    In y (supportedby_children ac x) ->
+    In y (reachable_set_fuel ac (S f) frontier acc).
+Proof.
+  intros ac f frontier acc x y Hx Hy. simpl.
+  remember (filter (fun id => negb (mem_string id acc))
+             (flat_map (supportedby_children ac) frontier)) as fresh.
+  assert (Hyin: In y (flat_map (supportedby_children ac) frontier)).
+  { apply in_flat_map. exists x. split; assumption. }
+  destruct (mem_string y acc) eqn:Hmem.
+  - destruct fresh as [|h t].
+    + exact (existsb_In _ _ Hmem).
+    + apply rsf_acc_subset. apply in_or_app. left.
+      exact (existsb_In _ _ Hmem).
+  - assert (Hyfresh : In y (filter (fun id => negb (mem_string id acc))
+                     (flat_map (supportedby_children ac) frontier))).
+    { apply filter_In. split; [exact Hyin |]. rewrite Hmem. reflexivity. }
+    rewrite <- Heqfresh in Hyfresh.
+    destruct fresh as [|h t].
+    + destruct Hyfresh.
+    + apply rsf_acc_subset. apply in_or_app. right. rewrite Heqfresh.
+      exact Hyfresh.
+Qed.
+
+(* A set S is child-closed when all SupportedBy children of members
+   are also members.                                                    *)
+Definition child_closed (ac : AssuranceCase) (S : list Id) : Prop :=
+  forall x y, In x S -> In y (supportedby_children ac x) -> In y S.
+
+(* Key lemma: Reaches within a child-closed set.                       *)
+Lemma reaches_in_closed : forall ac (S : list Id) u v,
+    child_closed ac S ->
+    In u S ->
+    Reaches ac u v ->
+    In v S.
+Proof.
+  intros ac S u v Hclosed Hu Hreach.
+  induction Hreach as [u0 v0 Hin | u0 w v0 H1 IH1 H2 IH2].
+  - exact (Hclosed u0 v0 Hu Hin).
+  - exact (IH2 (IH1 Hu)).
+Qed.
+
+(* Decompose Reaches into first step + remainder.                      *)
+Lemma reaches_first_step : forall ac u v,
+    Reaches ac u v ->
+    exists mid, In mid (supportedby_children ac u) /\
+                (mid = v \/ Reaches ac mid v).
+Proof.
+  intros ac u v H.
+  induction H as [u0 v0 Hin | u0 w v0 H1 IH1 H2 IH2].
+  - exists v0. split; [exact Hin | left; reflexivity].
+  - destruct IH1 as [mid1 [Hmid1 Hrest1]].
+    exists mid1. split; [exact Hmid1 |].
+    destruct Hrest1 as [<- | Hmid1w].
+    + right. exact H2.
+    + right. exact (R_Trans ac mid1 w v0 Hmid1w H2).
+Qed.
+
+(* BFS check_acyclic detects self-loops.                               *)
+Lemma check_acyclic_self_loop : forall ac id,
+    check_acyclic ac = true ->
+    In id (map node_id ac.(ac_nodes)) ->
+    ~ In id (supportedby_children ac id).
+Proof.
+  intros ac id Hcheck Hin_nodes Hself.
+  unfold check_acyclic in Hcheck.
+  apply in_map_iff in Hin_nodes. destruct Hin_nodes as [n [Hid Hn]].
+  apply forallb_forall with (x := n) in Hcheck; [| exact Hn].
+  rewrite <- Hid in Hcheck.
+  assert (Hresult : In id (reachable_from ac id)).
+  { unfold reachable_from. apply rsf_acc_subset. exact Hself. }
+  rewrite (In_existsb _ _ Hresult) in Hcheck. discriminate.
+Qed.
+
+(* BFS detects 1-step cycles: if x is a node and y is a child of x,
+   and x is a child of y, check_acyclic catches it.                    *)
+Lemma check_acyclic_two_cycle : forall ac x y,
+    check_acyclic ac = true ->
+    In x (map node_id ac.(ac_nodes)) ->
+    In y (supportedby_children ac x) ->
+    ~ In x (supportedby_children ac y).
+Proof.
+  intros ac x y Hcheck Hx_node Hxy Hyx.
+  unfold check_acyclic in Hcheck.
+  apply in_map_iff in Hx_node. destruct Hx_node as [n [Hid Hn]].
+  apply forallb_forall with (x := n) in Hcheck; [| exact Hn].
+  rewrite <- Hid in Hcheck.
+  assert (Hresult : In x (reachable_from ac x)).
+  { unfold reachable_from.
+    apply rsf_frontier_child with (x := y).
+    - apply rsf_acc_subset. exact Hxy.
+    - exact Hyx. }
+  rewrite (In_existsb _ _ Hresult) in Hcheck. discriminate.
+Qed.
+
+(* Bridge: check_well_formed + structural_checks => Acyclic.
+   Either path suffices; the topo path has complete soundness.         *)
+Lemma check_well_formed_acyclic : forall ac,
+    check_well_formed ac = true ->
+    structural_checks ac = true ->
+    Acyclic ac.
+Proof.
+  intros ac _ Hstruct.
+  unfold structural_checks in Hstruct.
+  repeat (apply Bool.andb_true_iff in Hstruct;
+          destruct Hstruct as [Hstruct ?]).
+  exact (verify_topo_order_acyclic ac (topo_sort ac) H1).
+Qed.
+
+(* ================================================================== *)
+(* Section 11: Checker relationship                                    *)
+(* ================================================================== *)
+
+(* All-discharged implies reachable-discharged for found nodes.
+   check_all_discharged checks every node in ac_nodes;
+   check_discharged checks only reachable IDs but may encounter
+   IDs with no corresponding node (returning false).  When all
+   reachable IDs do have nodes (guaranteed by no_dangling for
+   nodes reachable via edges), the all-nodes check is stronger.       *)
+Lemma check_all_discharged_node : forall ac n,
+    check_all_discharged ac = true ->
+    In n ac.(ac_nodes) ->
+    match n.(node_kind) with
+    | Solution =>
+      match n.(node_evidence) with
+      | Some (Certificate b _ v) => v b = true
+      | Some (ProofTerm _ _ _ _) => True
+      | None => False
+      end
+    | Goal | Strategy =>
+      supportedby_children ac n.(node_id) <> []
+    | _ => True
+    end.
+Proof.
+  intros ac n Hall Hn.
+  unfold check_all_discharged in Hall.
+  apply forallb_forall with (x := n) in Hall; [| exact Hn].
+  destruct n.(node_kind) eqn:Hk.
+  - destruct (supportedby_children ac n.(node_id)) eqn:Hkids;
+      [simpl in Hall; discriminate | intro; discriminate].
+  - destruct (supportedby_children ac n.(node_id)) eqn:Hkids;
+      [simpl in Hall; discriminate | intro; discriminate].
+  - destruct n.(node_evidence) as [e|] eqn:He; [| discriminate].
+    destruct e as [lbl P pf chk | blob tool v].
+    + exact I.
+    + exact Hall.
+  - exact I.
+  - exact I.
+  - exact I.
+Qed.
+
+(* ================================================================== *)
+(* Section 12: Compositional well-formedness                           *)
+(* ================================================================== *)
+
+(* Compositional WellFormed theorem.
+   Assembles all proved component lemmas and takes the remaining
+   obligations (acyclicity, entailment, evidence validity, discharged)
+   as user-supplied hypotheses.  For concrete cases, these are
+   typically discharged by vm_compute.                                 *)
+Theorem compose_well_formed : forall p s g,
+    WellFormed p ->
+    WellFormed s ->
+    (exists ng, find_node p g = Some ng) ->
+    (exists nt, find_node s s.(ac_top) = Some nt) ->
+    (forall id, In id (map node_id p.(ac_nodes)) ->
+                In id (map node_id s.(ac_nodes)) -> False) ->
+    (* User obligations — provable by vm_compute for concrete cases *)
+    Acyclic (compose_cases p s g) ->
+    all_reachable_discharged (compose_cases p s g) ->
+    (forall id n,
+      find_node (compose_cases p s g) id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children (compose_cases p s g) id in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node (compose_cases p s g) kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    WellFormed (compose_cases p s g).
+Proof.
+  intros p s g HWFp HWFs Hng Hnt Hdisj Hacyc Hdisc Hent.
+  constructor.
+  - (* top_is_goal *)
+    destruct (wf_top _ HWFp) as [n [Hf Hk]].
+    exists n. split.
+    + rewrite compose_find_node. rewrite Hf. reflexivity.
+    + exact Hk.
+  - exact Hacyc.
+  - exact Hdisc.
+  - exact (compose_no_dangling p s g
+             (wf_no_dangle _ HWFp) (wf_no_dangle _ HWFs) Hng Hnt).
+  - exact (compose_unique_ids p s g
+             (wf_unique_ids _ HWFp) (wf_unique_ids _ HWFs) Hdisj).
+  - exact Hent.
+  - exact (compose_well_typed_context_links p s g
+             (wf_context_links _ HWFp) (wf_context_links _ HWFs)).
+Qed.
+
+(* Concrete-case variant: discharge acyclicity and discharged-ness
+   via structural_checks, keeping entailment as user obligation.       *)
+Theorem compose_well_formed_auto : forall p s g,
+    WellFormed p ->
+    WellFormed s ->
+    (exists ng, find_node p g = Some ng) ->
+    (exists nt, find_node s s.(ac_top) = Some nt) ->
+    (forall id, In id (map node_id p.(ac_nodes)) ->
+                In id (map node_id s.(ac_nodes)) -> False) ->
+    structural_checks (compose_cases p s g) = true ->
+    (forall n e,
+      In n (compose_cases p s g).(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e ->
+      evidence_valid n e) ->
+    (forall id n,
+      find_node (compose_cases p s g) id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children (compose_cases p s g) id in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node (compose_cases p s g) kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    WellFormed (compose_cases p s g).
+Proof.
+  intros p s g HWFp HWFs Hng Hnt Hdisj Hstruct Hev Hent.
+  exact (build_well_formed (compose_cases p s g) Hstruct Hent Hev).
+Qed.
+
+(* ================================================================== *)
+(* Section 13: Improved entailment tactics                             *)
+(* ================================================================== *)
+
+Ltac solve_entailment_robust find_equiv :=
+  intros ? ? Hfind Hkind;
+  rewrite find_equiv in Hfind;
+  repeat match type of Hfind with
+  | (if ?c then _ else _) = _ =>
+      destruct c eqn:?;
+      [ injection Hfind as <-;
+        first [ vm_compute; tauto
+              | vm_compute; intuition
+              | vm_compute; firstorder
+              | simpl; tauto
+              | simpl; intuition
+              | exfalso; destruct Hkind as [? | ?]; discriminate ]
+      | ]
+  end;
+  try discriminate.
+
+Ltac solve_entailment_with_hyps find_equiv :=
+  intros ? ? Hfind Hkind;
+  rewrite find_equiv in Hfind;
+  repeat match type of Hfind with
+  | (if ?c then _ else _) = _ =>
+      destruct c eqn:?;
+      [ injection Hfind as <-;
+        first [ vm_compute; tauto
+              | vm_compute; intuition auto with *
+              | vm_compute; firstorder auto with *
+              | exfalso; destruct Hkind as [? | ?]; discriminate ]
+      | ]
+  end;
+  try discriminate.
+
+Ltac try_well_formed_auto :=
+  first [ prove_well_formed_auto
+        | match goal with
+          | |- WellFormed ?ac =>
+            apply build_well_formed;
+            [ vm_compute; reflexivity
+            | idtac "Entailment goal requires manual proof"
+            | prove_evidence_valid ]
+          end ].

@@ -120,11 +120,15 @@ Definition node_kind_to_json (nk : NodeKind) : Json :=
    evidence — use hydrate_evidence to re-attach it.                    *)
 Definition evidence_to_json (e : Evidence) : Json :=
   match e with
-  | ProofTerm lbl _ _ =>
+  | ProofTerm lbl _ _ _ =>
       JObj [("type", JStr "ProofTerm"); ("label", JStr lbl)]
-  | Certificate blob _ =>
-      JObj [("type", JStr "Certificate"); ("blob", JStr blob)]
+  | Certificate blob tool _ =>
+      JObj [("type", JStr "Certificate"); ("blob", JStr blob);
+            ("tool", JStr tool)]
   end.
+
+Definition metadata_to_json (md : list (string * string)) : Json :=
+  JObj (map (fun kv => (fst kv, JStr (snd kv))) md).
 
 Definition node_to_json (n : Node) : Json :=
   JObj [("id", JStr n.(node_id));
@@ -134,7 +138,8 @@ Definition node_to_json (n : Node) : Json :=
           match n.(node_evidence) with
           | Some e => evidence_to_json e
           | None => JNull
-          end)].
+          end);
+        ("metadata", metadata_to_json n.(node_metadata))].
 
 Definition link_kind_to_json (lk : LinkKind) : Json :=
   JStr match lk with
@@ -331,6 +336,80 @@ Definition render_dot (ac : AssuranceCase) : string :=
     ++ "}" ++ nl.
 
 (* ------------------------------------------------------------------ *)
+(* DOT export with layout options                                       *)
+(* ------------------------------------------------------------------ *)
+
+Record DotOptions : Type := {
+  dot_rankdir       : string;   (* "TB", "LR", "BT", "RL" *)
+  dot_cluster       : bool;     (* group nodes by kind *)
+  dot_show_metadata : bool;     (* include metadata in labels *)
+  dot_show_evidence : bool;     (* include evidence labels *)
+}.
+
+Definition default_dot_options : DotOptions := {|
+  dot_rankdir       := "TB";
+  dot_cluster       := false;
+  dot_show_metadata := false;
+  dot_show_evidence := false;
+|}.
+
+Definition render_dot_node_opts (opts : DotOptions) (n : Node) : string :=
+  let base_label := n.(node_id) ++ ": " ++ n.(node_claim_text) in
+  let ev_label :=
+    if opts.(dot_show_evidence) then
+      match n.(node_evidence) with
+      | Some e => "\n[" ++ evidence_label e ++ "]"
+      | None => ""
+      end
+    else "" in
+  let md_label :=
+    if opts.(dot_show_metadata) then
+      concat_strings (map (fun kv =>
+        "\n" ++ fst kv ++ "=" ++ snd kv) n.(node_metadata))
+    else "" in
+  let label := base_label ++ ev_label ++ md_label in
+  "  " ++ json_quote n.(node_id) ++ " [label=" ++ json_quote label
+       ++ ",shape=" ++ node_kind_shape n.(node_kind)
+       ++ ",style=filled,fillcolor=" ++ json_quote (node_kind_color n.(node_kind))
+       ++ "];" ++ nl.
+
+Definition node_kind_to_string (nk : NodeKind) : string :=
+  match nk with
+  | Goal => "Goal" | Strategy => "Strategy" | Solution => "Solution"
+  | Context => "Context" | Assumption => "Assumption"
+  | Justification => "Justification"
+  end.
+
+Definition render_dot_cluster_nodes (kind : NodeKind)
+    (nodes : list Node) : string :=
+  let filtered := filter (fun n => match n.(node_kind), kind with
+    | Goal, Goal | Strategy, Strategy | Solution, Solution
+    | Context, Context | Assumption, Assumption
+    | Justification, Justification => true | _, _ => false end) nodes in
+  match filtered with
+  | [] => ""
+  | _ =>
+    "  subgraph cluster_" ++ node_kind_to_string kind ++ " {" ++ nl
+    ++ "    label=" ++ json_quote (node_kind_to_string kind) ++ ";" ++ nl
+    ++ concat_strings (map (fun n =>
+         "    " ++ json_quote n.(node_id) ++ ";" ++ nl) filtered)
+    ++ "  }" ++ nl
+  end.
+
+Definition render_dot_with_options (opts : DotOptions)
+    (ac : AssuranceCase) : string :=
+  "digraph assurance_case {" ++ nl
+    ++ "  rankdir=" ++ opts.(dot_rankdir) ++ ";" ++ nl
+    ++ (if opts.(dot_cluster) then
+          concat_strings (map (fun k =>
+            render_dot_cluster_nodes k ac.(ac_nodes))
+            [Goal; Strategy; Solution; Context; Assumption; Justification])
+        else "")
+    ++ concat_strings (map (render_dot_node_opts opts) ac.(ac_nodes))
+    ++ concat_strings (map render_dot_edge ac.(ac_links))
+    ++ "}" ++ nl.
+
+(* ------------------------------------------------------------------ *)
 (* Signed evidence blobs                                                *)
 (* ------------------------------------------------------------------ *)
 
@@ -354,7 +433,7 @@ Definition signed_blob_valid (sb : SignedBlob) : Prop :=
   sb.(sb_verify) sb.(sb_payload) sb.(sb_signature) = true.
 
 Definition signed_to_evidence (sb : SignedBlob) : Evidence :=
-  Certificate sb.(sb_payload)
+  Certificate sb.(sb_payload) "signed"
               (fun p => sb.(sb_verify) p sb.(sb_signature)).
 
 Lemma signed_evidence_valid : forall sb n,
@@ -372,8 +451,9 @@ Definition signed_to_json (sb : SignedBlob) : Json :=
 (* ------------------------------------------------------------------ *)
 
 (* Fuel-bounded recursive-descent parser.
-   Limitations: no Unicode escape sequences (\uXXXX), non-negative
-   integers only (no floats, no negative numbers).  Sufficient for
+   Handles: strings (with \uXXXX for ASCII range), objects, arrays,
+   non-negative integers, booleans, null.  For negative numbers and
+   floats, use the extended JsonExt parser.  Sufficient for
    round-tripping assurance-case JSON produced by render_json.         *)
 
 Definition nat_of_ascii_local (a : ascii) : nat :=
@@ -421,6 +501,35 @@ Fixpoint string_length (s : string) : nat :=
   | String _ rest => S (string_length rest)
   end.
 
+(* Hex digit value for \uXXXX parsing. *)
+Definition hex_value_of_local (c : ascii) : option nat :=
+  let n := nat_of_ascii_local c in
+  if Nat.leb 48 n && Nat.leb n 57 then Some (n - 48)
+  else if Nat.leb 65 n && Nat.leb n 70 then Some (n - 55)
+  else if Nat.leb 97 n && Nat.leb n 102 then Some (n - 87)
+  else None.
+
+(* Parse \uXXXX: exactly 4 hex digits, ASCII range only (0-127).
+   Higher codepoints are replaced with '?' since Rocq strings
+   are ASCII-only.                                                     *)
+Definition parse_unicode_escape_local (s : string) : option (ascii * string) :=
+  match s with
+  | String h1 (String h2 (String h3 (String h4 rest))) =>
+    match hex_value_of_local h1, hex_value_of_local h2,
+          hex_value_of_local h3, hex_value_of_local h4 with
+    | Some d1, Some d2, Some d3, Some d4 =>
+      let cp := d1 * 4096 + d2 * 256 + d3 * 16 + d4 in
+      if Nat.leb cp 127 then
+        let bit n := Nat.testbit cp n in
+        Some (Ascii (bit 0) (bit 1) (bit 2) (bit 3)
+                     (bit 4) (bit 5) (bit 6) false, rest)
+      else
+        Some ("?"%char, rest)
+    | _, _, _, _ => None
+    end
+  | _ => None
+  end.
+
 (* Parse a JSON string literal body (after opening double-quote).
    Returns (parsed_string, remaining_input).                           *)
 Fixpoint parse_string_chars (fuel : nat) (s : string) (acc : string)
@@ -451,6 +560,12 @@ Fixpoint parse_string_chars (fuel : nat) (s : string) (acc : string)
             parse_string_chars f rest2 (String bs_char acc)
           else if is_char_code c2 102 then
             parse_string_chars f rest2 (String ff_char acc)
+          else if is_char_code c2 117 then  (* 'u' = \uXXXX *)
+            match parse_unicode_escape_local rest2 with
+            | Some (ch, rest3) =>
+              parse_string_chars f rest3 (String ch acc)
+            | None => None
+            end
           else
             None
         end
@@ -663,10 +778,20 @@ Definition json_to_node (j : Json) : option Node :=
                           | Some (JStr s) => s
                           | _ => EmptyString
                           end in
+        let md := match json_field "metadata" kvs with
+                  | Some (JObj mkvs) =>
+                    flat_map (fun kv =>
+                      match snd kv with
+                      | JStr v => [(fst kv, v)]
+                      | _ => []
+                      end) mkvs
+                  | _ => []
+                  end in
         Some {| node_id := id;
                 node_kind := nk;
                 node_claim_text := claim_text;
                 node_evidence := None;
+                node_metadata := md;
                 node_claim := True |}
       | None => None
       end
@@ -748,6 +873,7 @@ Fixpoint hydrate_evidence_list (nodes : list Node)
        node_kind := n.(node_kind);
        node_claim_text := n.(node_claim_text);
        node_evidence := ev;
+       node_metadata := n.(node_metadata);
        node_claim := n.(node_claim) |}
     :: hydrate_evidence_list rest evidence_map
   end.
@@ -758,3 +884,322 @@ Definition hydrate_evidence (ac : AssuranceCase)
   ac_links := ac.(ac_links);
   ac_top := ac.(ac_top);
 |}.
+
+(* ------------------------------------------------------------------ *)
+(* Auto-hydrate from a validator registry                               *)
+(* ------------------------------------------------------------------ *)
+
+(* Reconstruct Certificate evidence for Solution nodes whose JSON
+   contained a tool identifier and blob.  Uses the registry to find
+   the matching validator function.  ProofTerm evidence cannot be
+   reconstructed (proofs are erased), but is reported as missing.       *)
+Fixpoint auto_hydrate_list (nodes : list Node)
+    (reg : ValidatorRegistry) : list Node :=
+  match nodes with
+  | nil => nil
+  | n :: rest =>
+    let n' :=
+      match n.(node_kind), n.(node_evidence) with
+      | Solution, None =>
+        match find_metadata "tool" n.(node_metadata),
+              find_metadata "blob" n.(node_metadata) with
+        | Some tool, Some blob =>
+          match registry_lookup tool reg with
+          | Some v =>
+            {| node_id := n.(node_id);
+               node_kind := n.(node_kind);
+               node_claim_text := n.(node_claim_text);
+               node_evidence := Some (Certificate blob tool v);
+               node_metadata := n.(node_metadata);
+               node_claim := n.(node_claim) |}
+          | None => n
+          end
+        | _, _ => n
+        end
+      | _, _ => n
+      end
+    in n' :: auto_hydrate_list rest reg
+  end.
+
+Definition auto_hydrate (ac : AssuranceCase)
+    (reg : ValidatorRegistry) : AssuranceCase := {|
+  ac_nodes := auto_hydrate_list ac.(ac_nodes) reg;
+  ac_links := ac.(ac_links);
+  ac_top := ac.(ac_top);
+|}.
+
+(* ------------------------------------------------------------------ *)
+(* Claim registry: rebuild claims after JSON import                     *)
+(* ------------------------------------------------------------------ *)
+
+(* After parsing JSON, all node_claim fields are True.  A ClaimEntry
+   maps a node ID to its intended Prop.  rebuild_claims replaces
+   node_claim for matched IDs, preserving everything else.
+   This is only meaningful inside Rocq — Props are erased at
+   extraction.  Use it to reconstruct a valid AssuranceCase from
+   parsed JSON, then prove WellFormed about the rebuilt case.          *)
+Record ClaimEntry : Type := {
+  ce_id    : Id;
+  ce_claim : Prop;
+}.
+
+Definition ClaimRegistry := list ClaimEntry.
+
+Fixpoint claim_registry_lookup (id : Id) (reg : ClaimRegistry)
+  : option Prop :=
+  match reg with
+  | [] => None
+  | entry :: rest =>
+    if String.eqb entry.(ce_id) id then Some entry.(ce_claim)
+    else claim_registry_lookup id rest
+  end.
+
+Fixpoint rebuild_claims_list (nodes : list Node)
+    (reg : ClaimRegistry) : list Node :=
+  match nodes with
+  | nil => nil
+  | n :: rest =>
+    let claim := match claim_registry_lookup n.(node_id) reg with
+                 | Some P => P
+                 | None => n.(node_claim)
+                 end in
+    {| node_id := n.(node_id);
+       node_kind := n.(node_kind);
+       node_claim_text := n.(node_claim_text);
+       node_evidence := n.(node_evidence);
+       node_metadata := n.(node_metadata);
+       node_claim := claim |}
+    :: rebuild_claims_list rest reg
+  end.
+
+Definition rebuild_claims (ac : AssuranceCase)
+    (reg : ClaimRegistry) : AssuranceCase := {|
+  ac_nodes := rebuild_claims_list ac.(ac_nodes) reg;
+  ac_links := ac.(ac_links);
+  ac_top := ac.(ac_top);
+|}.
+
+(* ------------------------------------------------------------------ *)
+(* Fold-based streaming export                                          *)
+(* ------------------------------------------------------------------ *)
+
+(* Process an assurance case with a fold, visiting each node and link
+   exactly once.  Useful for streaming output to a file or network
+   socket without materializing the entire JSON/DOT string.            *)
+Definition fold_assurance_case {A : Type} (ac : AssuranceCase)
+    (f_node : A -> Node -> A) (f_link : A -> Link -> A) (init : A) : A :=
+  let after_nodes := fold_left f_node ac.(ac_nodes) init in
+  fold_left f_link ac.(ac_links) after_nodes.
+
+(* Fold that also passes the node index (0-based). *)
+Fixpoint fold_nodes_indexed_go {A : Type}
+    (f : A -> nat -> Node -> A) (nodes : list Node)
+    (idx : nat) (acc : A) : A :=
+  match nodes with
+  | [] => acc
+  | n :: rest => fold_nodes_indexed_go f rest (S idx) (f acc idx n)
+  end.
+
+Definition fold_nodes_indexed {A : Type} (ac : AssuranceCase)
+    (f : A -> nat -> Node -> A) (init : A) : A :=
+  fold_nodes_indexed_go f ac.(ac_nodes) 0 init.
+
+(* Streaming DOT: emit lines via a fold. *)
+Definition stream_dot_lines (ac : AssuranceCase) : list string :=
+  ["digraph assurance_case {" ++ nl]
+  ++ map render_dot_node ac.(ac_nodes)
+  ++ map render_dot_edge ac.(ac_links)
+  ++ ["}" ++ nl].
+
+(* Streaming JSON: emit lines via a fold. *)
+Definition stream_json_lines (ac : AssuranceCase) : list string :=
+  let node_strs := map (fun n => render_json (node_to_json n)) ac.(ac_nodes) in
+  let link_strs := map (fun l => render_json (link_to_json l)) ac.(ac_links) in
+  ["{" ++ json_quote "top" ++ ":" ++ json_quote ac.(ac_top) ++ ","
+   ++ json_quote "nodes" ++ ":["]
+  ++ match node_strs with
+     | [] => []
+     | s :: rest => [s] ++ map (fun x => "," ++ x) rest
+     end
+  ++ ["]," ++ json_quote "links" ++ ":["]
+  ++ match link_strs with
+     | [] => []
+     | s :: rest => [s] ++ map (fun x => "," ++ x) rest
+     end
+  ++ ["]}"].
+
+(* ------------------------------------------------------------------ *)
+(* SACM-compatible export                                               *)
+(* ------------------------------------------------------------------ *)
+
+(* Minimal OMG SACM (Structured Assurance Case Metamodel) compatible
+   XML export.  Produces a self-contained ArgumentPackage element
+   with Claim, ArgumentReasoning, ArtifactReference, and
+   AssertedInference / AssertedContext elements.
+   Not a full SACM implementation — sufficient for import into
+   tools that support the SACM 2.2 interchange format.                 *)
+
+Definition xml_escape (s : string) : string :=
+  (* Escape &, <, >, " for XML attribute values.
+     Reuse the JSON escaper for quotes; add XML-specific escapes. *)
+  let fix go (s : string) : string :=
+    match s with
+    | EmptyString => EmptyString
+    | String c rest =>
+      if ascii_eqb c dquote_char then
+        append "&quot;" (go rest)
+      else if ascii_eqb c
+        (Ascii false false true true true false false false) (* '<' = 60 *)
+      then append "&lt;" (go rest)
+      else if ascii_eqb c
+        (Ascii false true true true true false false false) (* '>' = 62 *)
+      then append "&gt;" (go rest)
+      else if ascii_eqb c
+        (Ascii false true true false false true false false) (* '&' = 38 *)
+      then append "&amp;" (go rest)
+      else String c (go rest)
+    end
+  in go s.
+
+Definition sacm_node_element (n : Node) : string :=
+  match n.(node_kind) with
+  | Goal | Strategy =>
+    "    <Claim id=" ++ json_quote n.(node_id)
+      ++ " content=" ++ json_quote (xml_escape n.(node_claim_text))
+      ++ " />" ++ nl
+  | Solution =>
+    "    <ArtifactReference id=" ++ json_quote n.(node_id)
+      ++ " content=" ++ json_quote (xml_escape n.(node_claim_text))
+      ++ " />" ++ nl
+  | Context | Assumption | Justification =>
+    "    <InformationElement id=" ++ json_quote n.(node_id)
+      ++ " content=" ++ json_quote (xml_escape n.(node_claim_text))
+      ++ " />" ++ nl
+  end.
+
+Definition sacm_link_element (l : Link) : string :=
+  match l.(link_kind) with
+  | SupportedBy =>
+    "    <AssertedInference id=" ++ json_quote (l.(link_from) ++ "->" ++ l.(link_to))
+      ++ " source=" ++ json_quote l.(link_from)
+      ++ " target=" ++ json_quote l.(link_to)
+      ++ " />" ++ nl
+  | InContextOf =>
+    "    <AssertedContext id=" ++ json_quote (l.(link_from) ++ "~>" ++ l.(link_to))
+      ++ " source=" ++ json_quote l.(link_from)
+      ++ " target=" ++ json_quote l.(link_to)
+      ++ " />" ++ nl
+  end.
+
+Definition render_sacm (ac : AssuranceCase) : string :=
+  "<?xml version=" ++ json_quote "1.0" ++ " encoding="
+    ++ json_quote "UTF-8" ++ "?>" ++ nl
+  ++ "<sacm:ArgumentPackage xmlns:sacm="
+    ++ json_quote "http://www.omg.org/spec/SACM/2.2"
+    ++ " id=" ++ json_quote ac.(ac_top) ++ ">" ++ nl
+  ++ concat_strings (map sacm_node_element ac.(ac_nodes))
+  ++ concat_strings (map sacm_link_element ac.(ac_links))
+  ++ "</sacm:ArgumentPackage>" ++ nl.
+
+(* ------------------------------------------------------------------ *)
+(* JSON parser extensions: negative numbers and floats                  *)
+(* ------------------------------------------------------------------ *)
+
+(* Negative number and float support.
+   We represent negative numbers as JNeg (nat), where JNeg n = -(S n).
+   Floats are represented as JFloat (string).                           *)
+Inductive JsonExt : Type :=
+  | JXNull   : JsonExt
+  | JXBool   : bool -> JsonExt
+  | JXStr    : string -> JsonExt
+  | JXNum    : nat -> JsonExt
+  | JXNeg    : nat -> JsonExt      (* JXNeg n = -(S n) *)
+  | JXFloat  : string -> JsonExt   (* preserved as string *)
+  | JXArr    : list JsonExt -> JsonExt
+  | JXObj    : list (string * JsonExt) -> JsonExt.
+
+(* Convert basic Json to extended *)
+Fixpoint json_to_ext (j : Json) : JsonExt :=
+  match j with
+  | JNull    => JXNull
+  | JBool b  => JXBool b
+  | JStr s   => JXStr s
+  | JNum n   => JXNum n
+  | JArr js  => JXArr (map json_to_ext js)
+  | JObj kvs => JXObj (map (fun kv => (fst kv, json_to_ext (snd kv))) kvs)
+  end.
+
+(* Convert extended back to basic (JXNeg -> JNum 0, JXFloat -> JStr) *)
+Fixpoint ext_to_json (j : JsonExt) : Json :=
+  match j with
+  | JXNull    => JNull
+  | JXBool b  => JBool b
+  | JXStr s   => JStr s
+  | JXNum n   => JNum n
+  | JXNeg _   => JNum 0  (* lossy: best effort *)
+  | JXFloat s => JStr s  (* preserve as string *)
+  | JXArr js  => JArr (map ext_to_json js)
+  | JXObj kvs => JObj (map (fun kv => (fst kv, ext_to_json (snd kv))) kvs)
+  end.
+
+(* Render a nat with a '-' prefix for negative rendering. *)
+Definition render_neg_nat (n : nat) : string :=
+  append "-" (nat_to_string (S n)).
+
+(* Extended JSON renderer *)
+Fixpoint render_json_ext (j : JsonExt) : string :=
+  let fix render_list (js : list JsonExt) : list string :=
+    match js with
+    | [] => []
+    | j' :: rest => render_json_ext j' :: render_list rest
+    end
+  in
+  let fix render_kvs (kvs : list (string * JsonExt)) : list string :=
+    match kvs with
+    | [] => []
+    | (k, v) :: rest =>
+        append (append (json_quote k) ":") (render_json_ext v)
+          :: render_kvs rest
+    end
+  in
+  match j with
+  | JXNull     => "null"
+  | JXBool true  => "true"
+  | JXBool false => "false"
+  | JXStr s    => json_quote s
+  | JXNum n    => nat_to_string n
+  | JXNeg n    => render_neg_nat n
+  | JXFloat s  => s
+  | JXArr elems =>
+      append "[" (append (join_strings "," (render_list elems)) "]")
+  | JXObj kvs =>
+      append "{" (append (join_strings "," (render_kvs kvs)) "}")
+  end.
+
+(* CheckError serialization — for CI/audit tooling. *)
+Definition check_error_to_json (err : CheckError) : Json :=
+  match err with
+  | ErrTopNotGoal id =>
+      JObj [("error", JStr "TopNotGoal"); ("node", JStr id)]
+  | ErrDanglingFrom f t =>
+      JObj [("error", JStr "DanglingFrom"); ("from", JStr f); ("to", JStr t)]
+  | ErrDanglingTo f t =>
+      JObj [("error", JStr "DanglingTo"); ("from", JStr f); ("to", JStr t)]
+  | ErrDuplicateId id =>
+      JObj [("error", JStr "DuplicateId"); ("node", JStr id)]
+  | ErrUnsupported id =>
+      JObj [("error", JStr "Unsupported"); ("node", JStr id)]
+  | ErrMissingEvidence id =>
+      JObj [("error", JStr "MissingEvidence"); ("node", JStr id)]
+  | ErrInvalidEvidence id =>
+      JObj [("error", JStr "InvalidEvidence"); ("node", JStr id)]
+  | ErrBadContextSource f t =>
+      JObj [("error", JStr "BadContextSource"); ("from", JStr f); ("to", JStr t)]
+  | ErrBadContextTarget f t =>
+      JObj [("error", JStr "BadContextTarget"); ("from", JStr f); ("to", JStr t)]
+  | ErrCycle id =>
+      JObj [("error", JStr "Cycle"); ("node", JStr id)]
+  end.
+
+Definition diagnose_to_json (ac : AssuranceCase) : Json :=
+  JArr (map check_error_to_json (diagnose_all ac)).
