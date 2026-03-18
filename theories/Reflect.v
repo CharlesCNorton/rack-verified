@@ -2023,6 +2023,75 @@ Proof.
            w v Hw Hv).
 Qed.
 
+(* ================================================================== *)
+(* Section 17: BFS acyclicity soundness                               *)
+(* ================================================================== *)
+
+(** If w is in the BFS result and Reaches ac w v, then v is also
+    in the result.  Follows by induction on Reaches using
+    reachable_from_closed at each step. *)
+Lemma reaches_in_reachable_from : forall ac start w v,
+    no_dangling_links ac ->
+    NoDup (map node_id ac.(ac_nodes)) ->
+    In w (reachable_from ac start) ->
+    Reaches ac w v ->
+    In v (reachable_from ac start).
+Proof.
+  intros ac start w v Hnd Hnodup Hw Hreach.
+  induction Hreach as [u0 v0 Hstep | u0 m v0 H1 IH1 H2 IH2].
+  - exact (reachable_from_closed ac start u0 v0 Hnd Hnodup Hw Hstep).
+  - exact (IH2 (IH1 Hw)).
+Qed.
+
+(** Soundness of check_acyclic: if the BFS-based checker returns
+    true (and the graph has no dangling links and unique node IDs),
+    the graph is acyclic. *)
+Lemma check_acyclic_sound : forall ac,
+    no_dangling_links ac ->
+    NoDup (map node_id ac.(ac_nodes)) ->
+    check_acyclic ac = true -> Acyclic ac.
+Proof.
+  intros ac Hnd Hnodup Hcheck id Hcycle.
+  (* From the cycle Reaches ac id id, extract a first step. *)
+  destruct (reaches_first_step ac id id Hcycle) as [mid [Hmid Hrest]].
+  (* mid is a SupportedBy child of id, hence in the initial
+     frontier = supportedby_children ac id = kids. *)
+  (* id must be a node: mid ∈ supportedby_children ac id
+     implies a SupportedBy link from id, so find_node ac id = Some n
+     by no_dangling_links. *)
+  destruct (supportedby_children_link ac id mid Hmid)
+    as [l [Hlin [_ [Hfrom _]]]].
+  destruct (Hnd l Hlin) as [[nf Hnf] _].
+  rewrite Hfrom in Hnf.
+  assert (Hin_nodes : In nf ac.(ac_nodes))
+    by exact (find_node_in' ac id nf Hnf).
+  assert (Hid_eq : nf.(node_id) = id)
+    by exact (find_node_id' ac id nf Hnf).
+  (* From check_acyclic, nf.(node_id) is NOT in
+     reachable_from ac nf.(node_id). *)
+  unfold check_acyclic in Hcheck.
+  apply forallb_forall with (x := nf) in Hcheck; [| exact Hin_nodes].
+  rewrite Hid_eq in Hcheck.
+  (* mid is in reachable_from ac id (it's in kids, which is the
+     initial accumulator of rsf). *)
+  assert (Hmid_in : In mid (reachable_from ac id)).
+  { unfold reachable_from. apply rsf_acc_subset. exact Hmid. }
+  (* Now derive id ∈ reachable_from ac id for contradiction. *)
+  assert (Hid_in : In id (reachable_from ac id)).
+  { destruct Hrest as [<- | Hreach_mid_id].
+    - (* mid = id: self-loop *)
+      exact Hmid_in.
+    - (* Reaches ac mid id: iterate reachable_from_closed *)
+      exact (reaches_in_reachable_from ac id mid id
+               Hnd Hnodup Hmid_in Hreach_mid_id). }
+  (* mem_string id (reachable_from ac id) = true *)
+  assert (Hmem : mem_string id (reachable_from ac id) = true)
+    by exact (In_mem_string id (reachable_from ac id) Hid_in).
+  (* But check_acyclic says negb (mem_string ...) = true,
+     i.e., mem_string ... = false.  Contradiction. *)
+  rewrite Hmem in Hcheck. discriminate.
+Qed.
+
 (** Combined completeness. *)
 Theorem diagnose_structural_complete : forall ac,
     diagnose_structural ac = [] ->
