@@ -292,6 +292,37 @@ Definition check_projected_no_dangling (plc : ProductLineCase)
     (v : Variant) : bool :=
   check_no_dangling (project_variant plc v).
 
+(** Soundness: the boolean checker implies [annotations_compatible]
+    for the given variant. *)
+Lemma check_annotations_compatible_sound : forall plc v,
+    check_annotations_compatible plc v = true ->
+    forall al, In al plc.(plc_links) ->
+    eval_feature v al.(al_feature) = true ->
+    (exists an, In an plc.(plc_nodes) /\
+      an.(an_node).(node_id) = al.(al_link).(link_from) /\
+      eval_feature v an.(an_feature) = true) /\
+    (exists an, In an plc.(plc_nodes) /\
+      an.(an_node).(node_id) = al.(al_link).(link_to) /\
+      eval_feature v an.(an_feature) = true).
+Proof.
+  intros plc v H al Hin Heval.
+  unfold check_annotations_compatible in H.
+  apply forallb_forall with (x := al) in H; [| exact Hin].
+  rewrite Heval in H.
+  apply Bool.andb_true_iff in H. destruct H as [Hfrom Hto].
+  split.
+  - apply existsb_exists in Hfrom. destruct Hfrom as [an [Han Hcond]].
+    apply Bool.andb_true_iff in Hcond. destruct Hcond as [Hid Hfe].
+    exists an. split; [exact Han | split].
+    + apply String.eqb_eq in Hid. exact Hid.
+    + exact Hfe.
+  - apply existsb_exists in Hto. destruct Hto as [an [Han Hcond]].
+    apply Bool.andb_true_iff in Hcond. destruct Hcond as [Hid Hfe].
+    exists an. split; [exact Han | split].
+    + apply String.eqb_eq in Hid. exact Hid.
+    + exact Hfe.
+Qed.
+
 (* ================================================================== *)
 (* Projection preserves acyclicity                                    *)
 (* ================================================================== *)
@@ -353,6 +384,26 @@ Qed.
     Goal/Strategy node's SupportedBy children include at least
     one child with a weaker (or equal) feature guard, ensuring
     support coverage is preserved across all variants. *)
+(** A family entailment holds when entailment is preserved across
+    all valid variants.  Since entailment is undecidable, this is
+    a propositional predicate — users prove it per case. *)
+Definition family_entailment (plc : ProductLineCase)
+    (entails : AssuranceCase -> Prop) : Prop :=
+  forall v, valid_variant plc.(plc_fm) v = true ->
+    entails (project_variant plc v).
+
+(** Projection preserves entailment when the base case has it
+    and all nodes are family-wide (FETrue). *)
+Theorem project_preserves_entailment : forall ac fm v
+    (entails : AssuranceCase -> Prop),
+    entails ac ->
+    valid_variant fm v = true ->
+    entails (project_variant (lift_to_product_line ac fm) v).
+Proof.
+  intros ac fm v entails Hent Hv.
+  rewrite project_lifted; [exact Hent | exact Hv].
+Qed.
+
 Definition check_monotone_support (plc : ProductLineCase)
     (v : Variant) : bool :=
   let ac := project_variant plc v in

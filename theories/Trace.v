@@ -230,6 +230,38 @@ Definition trace_coverage_count (tg : TraceGraph) : nat * nat :=
    length tg.(tg_requirements)).
 
 (* ================================================================== *)
+(* Trace freshness checker                                             *)
+(* ================================================================== *)
+
+Definition check_trace_fresh (tg : TraceGraph) (now : string) : bool :=
+  forallb (fun tl =>
+    match tl.(tl_kind) with
+    | TL_VerifiedBy =>
+      match find_node tg.(tg_case) tl.(tl_target) with
+      | Some n =>
+        match find_metadata "valid_until" n.(node_metadata) with
+        | Some (MVTimestamp expiry) => negb (string_ltb expiry now)
+        | Some (MVString expiry) => negb (string_ltb expiry now)
+        | _ => true
+        end
+      | None => false
+      end
+    | _ => true
+    end) tg.(tg_trace_links).
+
+Lemma check_trace_fresh_correct : forall tg now,
+    check_trace_fresh tg now = true -> trace_fresh tg now.
+Proof.
+  intros tg now H tl Hin Hkind.
+  unfold check_trace_fresh in H.
+  apply forallb_forall with (x := tl) in H; [| exact Hin].
+  rewrite Hkind in H.
+  destruct (find_node tg.(tg_case) tl.(tl_target)); [| discriminate].
+  destruct (find_metadata "valid_until" n.(node_metadata)) as [[| | |s]|];
+    try exact I; exact H.
+Qed.
+
+(* ================================================================== *)
 (* Invalidation theory                                                 *)
 (* ================================================================== *)
 
