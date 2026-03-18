@@ -231,3 +231,70 @@ Proof.
   intros ac. unfold apply_delta, empty_delta. simpl.
   destruct ac. reflexivity.
 Qed.
+
+(* ================================================================== *)
+(* Additive delta composition                                        *)
+(* ================================================================== *)
+
+Definition additive_node_change (nc : NodeChange) : bool :=
+  match nc with RemoveNode _ => false | _ => true end.
+
+Definition additive_delta (d : AssuranceDelta) : bool :=
+  forallb additive_node_change d.(ad_node_changes).
+
+(** Additive node changes commute with any link change because
+    they only touch ac_nodes while link changes only touch ac_links. *)
+Lemma anc_alc_commute : forall ac nc lc,
+    additive_node_change nc = true ->
+    apply_link_change (apply_node_change ac nc) lc =
+    apply_node_change (apply_link_change ac lc) nc.
+Proof.
+  intros ac nc lc Hadd.
+  destruct nc as [n | id | id ev]; simpl in Hadd; [| discriminate |];
+    destruct lc as [l | from to]; destruct ac; reflexivity.
+Qed.
+
+(** Lift single-step commutation to fold_left over node changes. *)
+Lemma fold_anc_alc_commute : forall ncs ac lc,
+    forallb additive_node_change ncs = true ->
+    fold_left apply_node_change ncs (apply_link_change ac lc) =
+    apply_link_change (fold_left apply_node_change ncs ac) lc.
+Proof.
+  induction ncs as [|nc ncs' IH]; intros ac lc Hadd.
+  - reflexivity.
+  - simpl. simpl in Hadd. apply Bool.andb_true_iff in Hadd.
+    destruct Hadd as [Hnc Hrest].
+    rewrite <- (anc_alc_commute ac nc lc Hnc).
+    exact (IH _ _ Hrest).
+Qed.
+
+(** Full commutation: fold of link changes commutes with fold of
+    additive node changes. *)
+Lemma fold_alc_fold_anc_commute : forall lcs ncs ac,
+    forallb additive_node_change ncs = true ->
+    fold_left apply_link_change lcs (fold_left apply_node_change ncs ac) =
+    fold_left apply_node_change ncs (fold_left apply_link_change lcs ac).
+Proof.
+  induction lcs as [|lc lcs' IH]; intros ncs ac Hadd.
+  - reflexivity.
+  - simpl.
+    rewrite <- (fold_anc_alc_commute ncs ac lc Hadd).
+    exact (IH ncs (apply_link_change ac lc) Hadd).
+Qed.
+
+(** Composition distributes over application when the second delta
+    is additive (no RemoveNode changes).  RemoveNode changes affect
+    both ac_nodes and ac_links, breaking the commutation. *)
+Theorem apply_delta_compose : forall ac d1 d2,
+    additive_delta d2 = true ->
+    apply_delta ac (compose_deltas d1 d2) =
+    apply_delta (apply_delta ac d1) d2.
+Proof.
+  intros ac d1 d2 Hadd. unfold apply_delta, compose_deltas. simpl.
+  do 2 rewrite fold_left_app.
+  apply (f_equal (fold_left apply_link_change d2.(ad_link_changes))).
+  exact (fold_alc_fold_anc_commute
+           d1.(ad_link_changes) d2.(ad_node_changes)
+           (fold_left apply_node_change d1.(ad_node_changes) ac)
+           Hadd).
+Qed.

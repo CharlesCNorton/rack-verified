@@ -266,3 +266,197 @@ Definition obligations_discharged (tg : TraceGraph)
                 end
     | None => False
     end.
+
+(* ================================================================== *)
+(* check_trace_total_correct                                          *)
+(* ================================================================== *)
+
+Lemma check_trace_total_correct : forall tg,
+    check_trace_total tg = true -> trace_total tg.
+Proof.
+  intros tg H r Hin.
+  unfold check_trace_total in H.
+  apply forallb_forall with (x := r) in H; [| exact Hin].
+  apply existsb_exists in H. destruct H as [tl [Htlin Hcond]].
+  apply Bool.andb_true_iff in Hcond. destruct Hcond as [Hkind Hsrc].
+  exists tl. repeat split.
+  - exact Htlin.
+  - destruct tl.(tl_kind); try discriminate. reflexivity.
+  - exact Hsrc.
+Qed.
+
+(* ================================================================== *)
+(* check_trace_provenance_correct                                     *)
+(* ================================================================== *)
+
+Lemma check_trace_provenance_correct : forall tg,
+    check_trace_provenance tg = true -> trace_provenance tg.
+Proof.
+  intros tg H n Hin Hkind.
+  unfold check_trace_provenance in H.
+  apply forallb_forall with (x := n) in H; [| exact Hin].
+  rewrite Hkind in H.
+  apply existsb_exists in H. destruct H as [tl [Htlin Hcond]].
+  apply Bool.andb_true_iff in Hcond. destruct Hcond as [Htkind Hsrc].
+  exists tl. repeat split.
+  - exact Htlin.
+  - destruct tl.(tl_kind); try discriminate. reflexivity.
+  - exact Hsrc.
+Qed.
+
+(* ================================================================== *)
+(* Invalidation soundness                                              *)
+(* ================================================================== *)
+
+(** Helper: every id in [reachable_set_fuel] is either in the
+    accumulator or is a link target, hence exists when
+    [no_dangling_links] holds. *)
+Lemma rsf_nodes_exist : forall ac fuel frontier acc,
+    no_dangling_links ac ->
+    (forall id, In id acc -> exists n, find_node ac id = Some n) ->
+    (forall id, In id frontier -> exists n, find_node ac id = Some n) ->
+    forall id, In id (reachable_set_fuel ac fuel frontier acc) ->
+    exists n, find_node ac id = Some n.
+Proof.
+  intros ac fuel. induction fuel as [|f IH];
+    intros frontier acc Hnd Hacc Hfront id Hin.
+  - simpl in Hin. exact (Hacc id Hin).
+  - simpl in Hin.
+    remember (filter (fun id0 => negb (mem_string id0 acc))
+               (flat_map (supportedby_children ac) frontier)) as fresh.
+    destruct fresh as [|h t].
+    + exact (Hacc id Hin).
+    + apply IH in Hin; [exact Hin | exact Hnd | |].
+      * intros id' Hin'. apply in_app_iff in Hin'.
+        destruct Hin' as [Hin' | Hin'].
+        -- exact (Hacc id' Hin').
+        -- rewrite Heqfresh in Hin'.
+           apply filter_In in Hin'. destruct Hin' as [Hin' _].
+           apply in_flat_map in Hin'.
+           destruct Hin' as [parent [_ Hchild]].
+           unfold supportedby_children in Hchild.
+           apply in_map_iff in Hchild.
+           destruct Hchild as [l [<- Hlin']].
+           apply filter_In in Hlin'. destruct Hlin' as [Hlin' _].
+           destruct (Hnd l Hlin') as [_ [nt Hnt]].
+           exists nt. exact Hnt.
+      * intros id' Hin'. rewrite Heqfresh in Hin'.
+        apply filter_In in Hin'. destruct Hin' as [Hin' _].
+        apply in_flat_map in Hin'.
+        destruct Hin' as [parent [_ Hchild]].
+        unfold supportedby_children in Hchild.
+        apply in_map_iff in Hchild.
+        destruct Hchild as [l [<- Hlin']].
+        apply filter_In in Hlin'. destruct Hlin' as [Hlin' _].
+        destruct (Hnd l Hlin') as [_ [nt Hnt]].
+        exists nt. exact Hnt.
+Qed.
+
+Lemma reachable_from_exists : forall ac start,
+    no_dangling_links ac ->
+    (exists n, find_node ac start = Some n) ->
+    forall id, In id (reachable_from ac start) ->
+    exists n, find_node ac id = Some n.
+Proof.
+  intros ac start Hnd [ns Hns] id Hin.
+  unfold reachable_from in Hin.
+  apply rsf_nodes_exist in Hin; [exact Hin | exact Hnd | |].
+  - intros id' Hin'.
+    unfold supportedby_children in Hin'.
+    apply in_map_iff in Hin'.
+    destruct Hin' as [l [<- Hlin']].
+    apply filter_In in Hlin'. destruct Hlin' as [Hlin' _].
+    destruct (Hnd l Hlin') as [_ [nt Hnt]].
+    exists nt. exact Hnt.
+  - intros id' Hin'.
+    unfold supportedby_children in Hin'.
+    apply in_map_iff in Hin'.
+    destruct Hin' as [l [<- Hlin']].
+    apply filter_In in Hlin'. destruct Hlin' as [Hlin' _].
+    destruct (Hnd l Hlin') as [_ [nt Hnt]].
+    exists nt. exact Hnt.
+Qed.
+
+(** Stale nodes from [invalidate_requirement] exist in the case. *)
+Lemma invalidate_requirement_sound : forall tg rid,
+    no_dangling_links tg.(tg_case) ->
+    (forall tl, In tl tg.(tg_trace_links) ->
+      tl.(tl_kind) = TL_Satisfies ->
+      exists n, find_node tg.(tg_case) tl.(tl_target) = Some n) ->
+    invalidation_sound tg (invalidate_requirement tg rid).
+Proof.
+  intros tg rid Hnd Htrace id Hin.
+  unfold invalidate_requirement in Hin. simpl in Hin.
+  apply in_flat_map in Hin. destruct Hin as [claim_id [Hclaim Hin_reach]].
+  apply in_map_iff in Hclaim. destruct Hclaim as [tl [Htgt Htlin]].
+  apply filter_In in Htlin. destruct Htlin as [Htlin Hcond].
+  apply Bool.andb_true_iff in Hcond. destruct Hcond as [Hkind _].
+  subst claim_id.
+  assert (Hkind_eq : tl.(tl_kind) = TL_Satisfies).
+  { destruct tl.(tl_kind); try discriminate. reflexivity. }
+  destruct (Htrace tl Htlin Hkind_eq) as [nc Hfnc].
+  destruct Hin_reach as [<- | Hreach].
+  - exists nc. exact Hfnc.
+  - exact (reachable_from_exists tg.(tg_case) tl.(tl_target)
+             Hnd (ex_intro _ nc Hfnc) id Hreach).
+Qed.
+
+(** Soundness for [invalidate_commit]. *)
+Lemma invalidate_commit_sound : forall tg cid,
+    no_dangling_links tg.(tg_case) ->
+    (forall tl, In tl tg.(tg_trace_links) ->
+      tl.(tl_kind) = TL_ImplementedBy ->
+      exists n, find_node tg.(tg_case) tl.(tl_source) = Some n) ->
+    invalidation_sound tg (invalidate_commit tg cid).
+Proof.
+  intros tg cid Hnd Htrace id Hin.
+  unfold invalidate_commit in Hin. simpl in Hin.
+  apply in_flat_map in Hin. destruct Hin as [claim_id [Hclaim Hin_reach]].
+  apply in_flat_map in Hclaim. destruct Hclaim as [art [Hart Hclaim']].
+  apply in_map_iff in Hclaim'. destruct Hclaim' as [tl [Hsrc Htlin']].
+  apply filter_In in Htlin'. destruct Htlin' as [Htlin' Hcond'].
+  apply Bool.andb_true_iff in Hcond'. destruct Hcond' as [Hkind' _].
+  subst claim_id.
+  assert (Hkind_eq : tl.(tl_kind) = TL_ImplementedBy).
+  { destruct tl.(tl_kind); try discriminate. reflexivity. }
+  destruct (Htrace tl Htlin' Hkind_eq) as [nc Hfnc].
+  destruct Hin_reach as [<- | Hreach].
+  - exists nc. exact Hfnc.
+  - exact (reachable_from_exists tg.(tg_case) tl.(tl_source)
+             Hnd (ex_intro _ nc Hfnc) id Hreach).
+Qed.
+
+(* ================================================================== *)
+(* Obligations discharged restores evidence coverage                    *)
+(* ================================================================== *)
+
+(** When obligations are discharged and the case structure is unchanged,
+    every reachable Solution node has valid evidence. *)
+Lemma obligations_cover_solutions : forall tg iw now,
+    obligations_discharged tg iw now ->
+    (forall id, In id iw.(iw_obligations) <->
+      (match find_node tg.(tg_case) id with
+       | Some n => n.(node_kind) = Solution
+       | None => False
+       end /\ In id iw.(iw_stale_nodes))) ->
+    forall id, In id iw.(iw_stale_nodes) ->
+    match find_node tg.(tg_case) id with
+    | Some n =>
+      match n.(node_kind) with
+      | Solution => exists e, n.(node_evidence) = Some e /\ evidence_valid n e
+      | _ => True
+      end
+    | None => True
+    end.
+Proof.
+  intros tg iw now Hdisch Hobligs id Hstale.
+  destruct (find_node tg.(tg_case) id) as [n|] eqn:Hfind.
+  - destruct n.(node_kind) eqn:Hkind; try exact I.
+    (* Solution *)
+    assert (Hoblig : In id iw.(iw_obligations)).
+    { apply Hobligs. split; [rewrite Hfind; exact Hkind | exact Hstale]. }
+    pose proof (Hdisch id Hoblig) as Hd.
+    rewrite Hfind in Hd. destruct Hd as [_ [e [He [Hv _]]]].
+    exists e. exact (conj He Hv).
+  - exact I.
+Qed.

@@ -169,3 +169,60 @@ Proof. intros P Q H [HP _]. exact (H HP). Qed.
 Lemma entails_pair : forall P Q R,
     (P -> Q -> R) -> fold_right and True [P; Q] -> R.
 Proof. intros P Q R H [HP [HQ _]]. exact (H HP HQ). Qed.
+
+(* ================================================================== *)
+(* N-ary conjunction Entails instance                                 *)
+(* ================================================================== *)
+
+(** Right-nested conjunction without trailing True.
+    [conj_all [P; Q; R]] = [P /\ Q /\ R]. *)
+Fixpoint conj_all (ps : list Prop) : Prop :=
+  match ps with
+  | [] => True
+  | [P] => P
+  | P :: rest => P /\ conj_all rest
+  end.
+
+Lemma fold_and_to_conj_all : forall ps,
+    fold_right and True ps -> conj_all ps.
+Proof.
+  induction ps as [|P rest IH].
+  - intros; exact I.
+  - destruct rest as [|Q rest'].
+    + intro H. exact (proj1 H).
+    + intro H. split.
+      * exact (proj1 H).
+      * exact (IH (proj2 H)).
+Qed.
+
+Lemma conj_all_to_fold_and : forall ps,
+    conj_all ps -> fold_right and True ps.
+Proof.
+  induction ps as [|P rest IH].
+  - intros; exact I.
+  - destruct rest as [|Q rest'].
+    + intro HP. exact (conj HP I).
+    + intros [HP Hrest]. exact (conj HP (IH Hrest)).
+Qed.
+
+(** General n-ary conjunction instance.  Fires when the goal
+    is [conj_all cs] and the children are [cs]. *)
+Global Instance entails_conj_all (ps : list Prop)
+  : Entails ps (conj_all ps).
+Proof. intro H. exact (fold_and_to_conj_all ps H). Defined.
+
+(** 4-way conjunction. *)
+Global Instance entails_conj4 (P Q R S : Prop)
+  : Entails [P; Q; R; S] (P /\ Q /\ R /\ S).
+Proof.
+  intro H. destruct H as [HP [HQ [HR [HS _]]]].
+  exact (conj HP (conj HQ (conj HR HS))).
+Defined.
+
+(** 5-way conjunction. *)
+Global Instance entails_conj5 (P Q R S T : Prop)
+  : Entails [P; Q; R; S; T] (P /\ Q /\ R /\ S /\ T).
+Proof.
+  intro H. destruct H as [HP [HQ [HR [HS [HT _]]]]].
+  exact (conj HP (conj HQ (conj HR (conj HS HT)))).
+Defined.

@@ -129,3 +129,84 @@ Definition version_safe (ac : AssuranceCase)
     (reg : ProofIdRegistry) : bool :=
   check_proof_identities ac reg &&
   forallb (fun pi => replay_proof pi) reg.
+
+(* ================================================================== *)
+(* version_safe implies check_proof_identities                        *)
+(* ================================================================== *)
+
+Lemma version_safe_check_proof_identities : forall ac reg,
+    version_safe ac reg = true ->
+    check_proof_identities ac reg = true.
+Proof.
+  intros ac reg H. unfold version_safe in H.
+  apply Bool.andb_true_iff in H. exact (proj1 H).
+Qed.
+
+(* ================================================================== *)
+(* registries_consistent symmetry                                     *)
+(* ================================================================== *)
+
+Lemma find_proof_id_In : forall name reg pi,
+    find_proof_id name reg = Some pi -> In pi reg.
+Proof.
+  intros name reg. induction reg as [|p rest IH]; intros pi H; simpl in H.
+  - discriminate.
+  - destruct (String.eqb p.(pi_theorem_name) name) eqn:E.
+    + injection H as <-. left. reflexivity.
+    + right. exact (IH pi H).
+Qed.
+
+Lemma find_proof_id_name : forall name reg pi,
+    find_proof_id name reg = Some pi ->
+    pi.(pi_theorem_name) = name.
+Proof.
+  intros name reg. induction reg as [|p rest IH]; intros pi H; simpl in H.
+  - discriminate.
+  - destruct (String.eqb p.(pi_theorem_name) name) eqn:E.
+    + injection H as <-. apply String.eqb_eq in E. exact E.
+    + exact (IH pi H).
+Qed.
+
+Lemma In_find_proof_id : forall pi reg,
+    In pi reg ->
+    NoDup (map pi_theorem_name reg) ->
+    find_proof_id pi.(pi_theorem_name) reg = Some pi.
+Proof.
+  intros pi reg Hin Hnd.
+  induction reg as [|p rest IH].
+  - destruct Hin.
+  - simpl. inversion Hnd as [| ? ? Hna Hnd']; subst.
+    destruct Hin as [<- | Hin].
+    + rewrite String.eqb_refl. reflexivity.
+    + destruct (String.eqb p.(pi_theorem_name) pi.(pi_theorem_name)) eqn:E.
+      * apply String.eqb_eq in E.
+        exfalso. apply Hna.
+        apply in_map_iff. exists pi. exact (conj (eq_sym E) Hin).
+      * exact (IH Hin Hnd').
+Qed.
+
+(** [registries_consistent] is symmetric when the target registry
+    has unique theorem names. *)
+Lemma registries_consistent_sym : forall r1 r2,
+    NoDup (map pi_theorem_name r2) ->
+    registries_consistent r1 r2 = true ->
+    registries_consistent r2 r1 = true.
+Proof.
+  intros r1 r2 Hnd2 H.
+  unfold registries_consistent.
+  apply forallb_forall.
+  intros pi2 Hin2.
+  destruct (find_proof_id pi2.(pi_theorem_name) r1) as [pi1|] eqn:Hfind1.
+  - (* pi1 found in r1 *)
+    assert (Hin1 : In pi1 r1) by exact (find_proof_id_In _ _ _ Hfind1).
+    assert (Hname : pi1.(pi_theorem_name) = pi2.(pi_theorem_name))
+      by exact (find_proof_id_name _ _ _ Hfind1).
+    unfold registries_consistent in H.
+    apply forallb_forall with (x := pi1) in H; [| exact Hin1].
+    rewrite Hname in H.
+    rewrite (In_find_proof_id pi2 r2 Hin2 Hnd2) in H.
+    (* H : eqb pi1.hash pi2.hash = true *)
+    apply String.eqb_eq in H. rewrite H. apply String.eqb_refl.
+  - (* pi1 not found — vacuously true *)
+    reflexivity.
+Qed.

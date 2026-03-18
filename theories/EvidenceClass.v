@@ -4,6 +4,7 @@
 (* ------------------------------------------------------------------ *)
 
 From RACK Require Import Core.
+From RACK Require Import Reflect.
 Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
@@ -230,3 +231,73 @@ Definition check_admissible (ac : AssuranceCase) (now : string) : bool :=
   structural_checks ac &&
   check_all_fresh ac now &&
   check_class_trust ac.
+
+(* ================================================================== *)
+(* check_well_formed_fresh soundness                                  *)
+(* ================================================================== *)
+
+(** Build a [WellFormedFresh] from boolean checks plus the two
+    obligations that cannot be decided: entailment and evidence
+    validity (same preconditions as [build_well_formed]). *)
+Lemma build_well_formed_fresh : forall ac now,
+    check_well_formed_fresh ac now = true ->
+    (forall id n,
+      find_node ac id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children ac id in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node ac kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    (forall n e,
+      In n ac.(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e ->
+      evidence_valid n e) ->
+    WellFormedFresh ac now.
+Proof.
+  intros ac now Hcheck Hent Hev.
+  unfold check_well_formed_fresh in Hcheck.
+  apply Bool.andb_true_iff in Hcheck. destruct Hcheck as [Hstruct Hfresh].
+  constructor.
+  - exact (build_well_formed ac Hstruct Hent Hev).
+  - exact (check_all_fresh_correct ac now Hfresh).
+Qed.
+
+(* ================================================================== *)
+(* check_admissible soundness                                         *)
+(* ================================================================== *)
+
+(** Build an [Admissible] witness from boolean checks. *)
+Lemma check_admissible_sound : forall ac now,
+    check_admissible ac now = true ->
+    (forall id n,
+      find_node ac id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children ac id in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node ac kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    (forall n e,
+      In n ac.(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e ->
+      evidence_valid n e) ->
+    Admissible ac now.
+Proof.
+  intros ac now Hcheck Hent Hev.
+  unfold check_admissible in Hcheck.
+  apply Bool.andb_true_iff in Hcheck. destruct Hcheck as [Hcheck Hclass].
+  apply Bool.andb_true_iff in Hcheck. destruct Hcheck as [Hstruct Hfresh].
+  split; [| split].
+  - exact (build_well_formed ac Hstruct Hent Hev).
+  - exact (check_all_fresh_correct ac now Hfresh).
+  - exact Hclass.
+Qed.
