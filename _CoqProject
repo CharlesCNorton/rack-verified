@@ -1,6 +1,12 @@
 -R theories RACK
 -arg -w
 -arg -notation-overridden,-redundant-canonical-projection,-future-coercion-class-field
+theories/Types.v
+theories/Graph.v
+theories/WellFormedness.v
+theories/TopoSort.v
+theories/Diagnostics.v
+theories/ValidatorRegistry.v
 theories/Core.v
 theories/Main.v
 theories/Reflect.v
