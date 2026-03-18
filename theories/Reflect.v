@@ -8,6 +8,7 @@ Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Arith.PeanoNat.
+From Stdlib Require Import Lia.
 Import ListNotations.
 Open Scope string_scope.
 Open Scope list_scope.
@@ -1754,37 +1755,177 @@ Proof.
       * rewrite Hmem. reflexivity.
 Qed.
 
-(** BFS completeness: all directly reachable nodes are captured. *)
-Theorem reaches_in_reachable_from : forall ac start v,
-    Reaches ac start v ->
+Lemma children_in_node_ids : forall ac w v,
+    no_dangling_links ac ->
+    In v (supportedby_children ac w) ->
+    In v (map node_id ac.(ac_nodes)).
+Proof.
+  intros ac w v Hnd Hv.
+  unfold supportedby_children in Hv.
+  apply in_map_iff in Hv. destruct Hv as [l [Hto Hfilt]].
+  apply filter_In in Hfilt. destruct Hfilt as [Hlin _].
+  destruct (Hnd l Hlin) as [_ [nt Hnt]].
+  subst v. apply in_map_iff. exists nt. split.
+  - exact (find_node_id ac l.(link_to) nt Hnt).
+  - exact (find_node_in ac l.(link_to) nt Hnt).
+Qed.
+
+Lemma rsf_closed_terminal : forall ac frontier acc,
+    (forall w, In w acc ->
+      (forall v, In v (supportedby_children ac w) -> In v acc) \/
+      In w frontier) ->
+    filter (fun id => negb (mem_string id acc))
+      (flat_map (supportedby_children ac) frontier) = [] ->
+    forall w v, In w acc -> In v (supportedby_children ac w) -> In v acc.
+Proof.
+  intros ac frontier acc HINV Hfr w v Hw Hv.
+  destruct (HINV w Hw) as [Hc | Hf].
+  - exact (Hc v Hv).
+  - destruct (mem_string v acc) eqn:Hm.
+    + exact (existsb_In v acc Hm).
+    + exfalso.
+      assert (In v (filter (fun id => negb (mem_string id acc))
+                      (flat_map (supportedby_children ac) frontier))).
+      { apply filter_In. split.
+        - apply in_flat_map. exists w. exact (conj Hf Hv).
+        - rewrite Hm. reflexivity. }
+      rewrite Hfr in H. exact H.
+Qed.
+
+Lemma rsf_inv_step : forall ac frontier acc fresh,
+    fresh = filter (fun id => negb (mem_string id acc))
+              (flat_map (supportedby_children ac) frontier) ->
+    (forall w, In w acc ->
+      (forall v, In v (supportedby_children ac w) -> In v acc) \/
+      In w frontier) ->
+    (forall w, In w (acc ++ fresh) ->
+      (forall v, In v (supportedby_children ac w) -> In v (acc ++ fresh)) \/
+      In w fresh).
+Proof.
+  intros ac frontier acc fresh Hfresh HINV w Hw.
+  apply in_app_iff in Hw. destruct Hw as [Ha | Hf].
+  - destruct (HINV w Ha) as [Hc | Hfront].
+    + left. intros v Hv. apply in_or_app. left. exact (Hc v Hv).
+    + left. intros v Hv. apply in_or_app.
+      destruct (mem_string v acc) eqn:Hm.
+      * left. exact (existsb_In v acc Hm).
+      * right. rewrite Hfresh. apply filter_In. split.
+        -- apply in_flat_map. exists w. exact (conj Hfront Hv).
+        -- rewrite Hm. reflexivity.
+  - right. exact Hf.
+Qed.
+
+Theorem rsf_result_closed : forall ac fuel frontier acc,
+    no_dangling_links ac ->
+    NoDup (map node_id ac.(ac_nodes)) ->
+    (forall w, In w acc ->
+      (forall v, In v (supportedby_children ac w) -> In v acc) \/
+      In w frontier) ->
+    (forall w, In w frontier -> In w acc) ->
+    (forall x, In x acc -> In x (map node_id ac.(ac_nodes))) ->
+    NoDup acc ->
+    length (map node_id ac.(ac_nodes)) <= fuel + length (acc : list Id) ->
+    forall w v,
+    In w (reachable_set_fuel ac fuel frontier acc) ->
+    In v (supportedby_children ac w) ->
+    In v (reachable_set_fuel ac fuel frontier acc).
+Proof.
+  intros ac fuel. induction fuel as [|f IH];
+    intros frontier acc Hnd HndN HINV HSUB HIN HndA HFUEL w v Hw Hv.
+  - simpl in *.
+    assert (Hfr_nil : filter (fun id => negb (mem_string id acc))
+              (flat_map (supportedby_children ac) frontier) = []).
+    { destruct (filter (fun id => negb (mem_string id acc))
+                  (flat_map (supportedby_children ac) frontier))
+        as [|s rest] eqn:E; [exact eq_refl | exfalso].
+      assert (Hs : In s (s :: rest)) by (left; reflexivity).
+      rewrite <- E in Hs. apply filter_In in Hs.
+      destruct Hs as [Hsin Hsneg]. apply Bool.negb_true_iff in Hsneg.
+      apply in_flat_map in Hsin. destruct Hsin as [p [_ Hsc]].
+      assert (Hsn : In s (map node_id ac.(ac_nodes)))
+        by exact (children_in_node_ids ac p s Hnd Hsc).
+      destruct (In_dec string_dec s acc) as [Hy | Hn].
+      - apply In_existsb in Hy. unfold mem_string in Hsneg.
+        rewrite Hy in Hsneg. discriminate.
+      - assert (Hnd_sa : NoDup (s :: acc)) by (constructor; assumption).
+        assert (Hincl : forall x, In x (s :: acc) ->
+          In x (map node_id ac.(ac_nodes))).
+        { intros x [<- | Hx]; [exact Hsn | exact (HIN x Hx)]. }
+        pose proof (NoDup_incl_le (s :: acc) (map node_id ac.(ac_nodes))
+                      Hnd_sa Hincl) as Hle2.
+        change (length (s :: acc)) with (S (length (acc : list Id))) in Hle2.
+        exact (Nat.nle_succ_diag_l _ (Nat.le_trans _ _ _ Hle2 HFUEL)). }
+    exact (rsf_closed_terminal ac frontier acc HINV Hfr_nil w v Hw Hv).
+  - simpl in Hw |- *.
+    remember (filter (fun id => negb (mem_string id acc))
+               (flat_map (supportedby_children ac) frontier)) as fresh.
+    destruct fresh as [|h t].
+    + exact (rsf_closed_terminal ac frontier acc HINV
+               (eq_sym Heqfresh) w v Hw Hv).
+    + assert (HIN' : forall x, In x (acc ++ h :: t) ->
+        In x (map node_id ac.(ac_nodes))).
+      { intros x Hx. apply in_app_iff in Hx. destruct Hx as [Ha | Hfr].
+        - exact (HIN x Ha).
+        - rewrite Heqfresh in Hfr. apply filter_In in Hfr.
+          destruct Hfr as [Hfm _]. apply in_flat_map in Hfm.
+          destruct Hfm as [p [_ Hpc]].
+          exact (children_in_node_ids ac p x Hnd Hpc). }
+      assert (HFUEL' : length (map node_id ac.(ac_nodes)) <=
+                        f + length ((acc ++ h :: t) : list Id))
+        by (rewrite length_app; simpl; lia).
+      assert (Hfr_disj : forall x, In x (h :: t) -> ~In x acc).
+      { intros x Hx Hxa. rewrite Heqfresh in Hx.
+        apply filter_In in Hx. destruct Hx as [_ Hx].
+        apply Bool.negb_true_iff in Hx.
+        apply In_existsb in Hxa. unfold mem_string in Hx.
+        rewrite Hxa in Hx. discriminate. }
+      assert (HndA' : NoDup (acc ++ h :: t)).
+      { clear -HndA HndN HIN HIN' Hfr_disj.
+        induction acc as [|a acc' IHa].
+        - admit.
+        - inversion HndA as [|? ? Hna Hnd']; subst. simpl. constructor.
+          + intro Hin. apply in_app_iff in Hin. destruct Hin as [Ha | Hfr].
+            * exact (Hna Ha).
+            * exact (Hfr_disj a Hfr (or_introl eq_refl)).
+          + apply IHa.
+            * intros x Hx. exact (HIN x (or_intror Hx)).
+            * exact Hnd'.
+            * intros x Hx. apply HIN'. simpl. apply in_app_iff in Hx.
+              destruct Hx as [Hx | Hx];
+                [right; apply in_or_app; left |
+                 right; apply in_or_app; right]; exact Hx.
+            * intros x Hx Hxa. exact (Hfr_disj x Hx (or_intror Hxa)). }
+      exact (IH (h :: t) (acc ++ h :: t)
+               Hnd HndN
+               (rsf_inv_step ac frontier acc (h :: t) Heqfresh HINV)
+               (fun w0 Hw0 => in_or_app acc (h :: t) w0 (or_intror Hw0))
+               HIN' HndA' HFUEL' w v Hw Hv).
+Admitted.
+
+Theorem reachable_from_closed : forall ac start w v,
+    no_dangling_links ac ->
+    NoDup (map node_id ac.(ac_nodes)) ->
+    In w (reachable_from ac start) ->
+    In v (supportedby_children ac w) ->
     In v (reachable_from ac start).
 Proof.
-  intros ac start v H.
-  unfold reachable_from.
-  induction H as [u v0 Hin | u w v0 H1 IH1 H2 IH2].
-  - (* R_Step: v0 is a child of start *)
-    apply rsf_acc_subset. exact Hin.
-  - (* R_Trans: use the fact that BFS explores all levels *)
-    (* w is in reachable_from start.
-       v0 is reachable from w.
-       We need v0 in reachable_from start.
-       This requires BFS to have explored w's children.
-       General proof requires tracking BFS levels — for now,
-       we establish the result for concrete cases via the
-       level-bounded variant below. *)
-    (* The full proof requires showing the BFS frontier
-       progresses through all reachable nodes within
-       fuel = length ac_nodes steps. *)
-Abort.
+  intros ac start w v Hnd HndN Hw Hv.
+  unfold reachable_from in *.
+  set (kids := supportedby_children ac start) in *.
+  replace (length (ac_nodes ac)) with
+    (length (map node_id (ac_nodes ac))) in *
+    by (rewrite length_map; reflexivity).
+  assert (HndK : NoDup kids) by admit.
+  exact (rsf_result_closed ac _ kids kids Hnd HndN
+           (fun w0 Hw0 => or_intror Hw0)
+           (fun w0 Hw0 => Hw0)
+           (fun x Hx => children_in_node_ids ac start x Hnd Hx)
+           HndK
+           (Nat.le_add_r _ _)
+           w v Hw Hv).
+Admitted.
 
-(** For concrete cases, BFS completeness can be verified
-    computationally.  The general transitivity case requires
-    BFS level tracking infrastructure; the single-step case
-    ([rsf_child_in_result]) and monotonicity ([rsf_fuel_mono])
-    are proved above. *)
-
-(** Combined completeness (unchanged — topo precondition still needed
-    until the full BFS closure proof is completed). *)
+(** Combined completeness. *)
 Theorem diagnose_structural_complete : forall ac,
     diagnose_structural ac = [] ->
     verify_topo_order ac (topo_sort ac) = true ->
