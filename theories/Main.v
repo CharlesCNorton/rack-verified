@@ -1,5 +1,5 @@
 (* ------------------------------------------------------------------ *)
-(* 7. Main theorem                                                      *)
+(* Main theorem                                                         *)
 (* ------------------------------------------------------------------ *)
 
 From RACK Require Import Core.
@@ -11,7 +11,7 @@ Import ListNotations.
 Open Scope string_scope.
 
 (* ------------------------------------------------------------------ *)
-(* 7a. Decomposed well-foundedness lemmas                              *)
+(* Decomposed well-foundedness lemmas                                  *)
 (* ------------------------------------------------------------------ *)
 
 (* Height of a node in the support DAG, computed with bounded fuel.    *)
@@ -37,14 +37,14 @@ Lemma height_fuel_S : forall ac f id,
     end.
 Proof. intros; reflexivity. Qed.
 
-(* L1: Reachability is transitive.                                     *)
+(* Reachability is transitive.                                         *)
 Lemma reaches_trans : forall ac u w v,
     Reaches ac u w -> Reaches ac w v -> Reaches ac u v.
 Proof.
   intros. exact (R_Trans ac u w v H H0).
 Qed.
 
-(* L2: A child is reachable from its parent in one step.              *)
+(* A child is reachable from its parent in one step.                  *)
 Lemma child_reaches : forall ac parent kid,
     In kid (supportedby_children ac parent) ->
     Reaches ac parent kid.
@@ -52,7 +52,7 @@ Proof.
   intros. exact (R_Step ac parent kid H).
 Qed.
 
-(* L3: Everything reachable from a child is reachable from parent.    *)
+(* Everything reachable from a child is reachable from parent.        *)
 Lemma reachable_from_child : forall ac parent kid x,
     In kid (supportedby_children ac parent) ->
     Reaches ac kid x ->
@@ -64,7 +64,7 @@ Proof.
   - exact H0.
 Qed.
 
-(* L4: In an acyclic graph, a parent is NOT reachable from its child. *)
+(* In an acyclic graph, a parent is NOT reachable from its child.     *)
 Lemma acyclic_no_back_edge : forall ac parent kid,
     Acyclic ac ->
     In kid (supportedby_children ac parent) ->
@@ -102,7 +102,7 @@ Proof.
     + apply IH. intros z Hz. apply Hall. right. exact Hz.
 Qed.
 
-(* L5a: height_fuel is bounded by fuel.                                *)
+(* height_fuel is bounded by fuel.                                     *)
 Lemma height_fuel_le : forall ac fuel id,
     height_fuel ac fuel id <= fuel.
 Proof.
@@ -115,7 +115,7 @@ Proof.
       intros x Hx. apply IH.
 Qed.
 
-(* L5b: A child's height at fuel f is < parent's at fuel (S f).       *)
+(* A child's height at fuel f is < parent's at fuel (S f).             *)
 Lemma height_child_fuel : forall ac fuel id kid,
     In kid (supportedby_children ac id) ->
     height_fuel ac fuel kid < height_fuel ac (S fuel) id.
@@ -140,7 +140,7 @@ Proof.
     + apply R_Step. exact Hkid.
 Qed.
 
-(* L5c: Acc from fuel induction — if height < fuel, then Acc.         *)
+(* Acc from fuel induction — if height < fuel, then Acc.               *)
 Lemma acc_by_fuel : forall ac fuel id,
     WellFormed ac ->
     (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->
@@ -159,7 +159,7 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------------ *)
-(* 7b. Path-length bound (pigeonhole)                                  *)
+(* Path-length bound (pigeonhole)                                      *)
 (* ------------------------------------------------------------------ *)
 
 (* A nonempty list's fold_right max is attained by some element.       *)
@@ -422,7 +422,7 @@ Proof.
       * right; exact Hr.
 Qed.
 
-(* L5d: height_fuel at fuel = |nodes| is strictly less than |nodes|.  *)
+(* height_fuel at fuel = |nodes| is strictly less than |nodes|.        *)
 Lemma height_fuel_lt_nodes : forall ac id,
     WellFormed ac ->
     (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->

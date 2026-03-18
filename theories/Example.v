@@ -1,5 +1,5 @@
 (* ------------------------------------------------------------------ *)
-(* 11. Example: requirement -> theorem -> evidence                      *)
+(* Example: requirement -> theorem -> evidence                          *)
 (* ------------------------------------------------------------------ *)
 
 From RACK Require Import Core.
@@ -160,7 +160,7 @@ Proof. exact (assurance_case_supported ex_ac ex_wf). Qed.
 (* Eval vm_compute in render_dot ex_ac.             *)
 
 (* ------------------------------------------------------------------ *)
-(* 12. Multi-level example: Goal -> Strategy -> 2 Solutions + Context   *)
+(* Multi-level example: Goal -> Strategy -> 2 Solutions + Context       *)
 (* ------------------------------------------------------------------ *)
 
 Definition ml_security_claim : Prop := True.
@@ -358,7 +358,7 @@ Proof. exact (assurance_case_supported ml_ac ml_wf). Qed.
 (* Eval vm_compute in render_assurance_case ml_ac.  *)
 
 (* ------------------------------------------------------------------ *)
-(* 13. Extraction                                                       *)
+(* Extraction                                                           *)
 (* ------------------------------------------------------------------ *)
 
 Require Extraction.

@@ -25,7 +25,7 @@ Import ListNotations.
 Open Scope string_scope.
 
 (* ------------------------------------------------------------------ *)
-(* 1. Core types                                                        *)
+(* Core types                                                           *)
 (* ------------------------------------------------------------------ *)
 
 Definition Id := string.
@@ -63,7 +63,7 @@ Record AssuranceCase : Type := {
 }.
 
 (* ------------------------------------------------------------------ *)
-(* 2. Graph operations                                                  *)
+(* Graph operations                                                     *)
 (* ------------------------------------------------------------------ *)
 
 Definition find_node (ac : AssuranceCase) (id : Id) : option Node :=
@@ -77,7 +77,7 @@ Definition supportedby_children (ac : AssuranceCase) (id : Id) : list Id :=
             ac.(ac_links)).
 
 (* ------------------------------------------------------------------ *)
-(* 3. Reachability and acyclicity                                       *)
+(* Reachability and acyclicity                                          *)
 (* ------------------------------------------------------------------ *)
 
 Inductive Reaches (ac : AssuranceCase) : Id -> Id -> Prop :=
@@ -90,7 +90,7 @@ Definition Acyclic (ac : AssuranceCase) : Prop :=
   forall id, ~ Reaches ac id id.
 
 (* ------------------------------------------------------------------ *)
-(* 4. Evidence validity                                                 *)
+(* Evidence validity                                                    *)
 (* ------------------------------------------------------------------ *)
 
 (* Evidence is valid for a node only if it discharges THAT node's claim. *)
@@ -108,7 +108,7 @@ Definition solution_discharged (n : Node) : Prop :=
     evidence_valid n e.
 
 (* ------------------------------------------------------------------ *)
-(* 5. Support tree — the central inductive witness                      *)
+(* Support tree — the central inductive witness                         *)
 (* ------------------------------------------------------------------ *)
 
 (* A SupportTree for node [id] is a proof-relevant object:             *)
@@ -154,7 +154,7 @@ Inductive SupportTree (ac : AssuranceCase) : Id -> Prop :=
       SupportTree ac id.
 
 (* ------------------------------------------------------------------ *)
-(* 6. Well-formedness                                                   *)
+(* Well-formedness                                                      *)
 (* ------------------------------------------------------------------ *)
 
 Definition top_is_goal (ac : AssuranceCase) : Prop :=

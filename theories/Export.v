@@ -1,5 +1,5 @@
 (* ------------------------------------------------------------------ *)
-(* 8. JSON export                                                       *)
+(* JSON export                                                          *)
 (* ------------------------------------------------------------------ *)
 
 From RACK Require Import Core.
@@ -135,7 +135,7 @@ Definition render_assurance_case (ac : AssuranceCase) : string :=
   render_json (assurance_case_to_json ac).
 
 (* ------------------------------------------------------------------ *)
-(* 9. DOT export                                                        *)
+(* DOT export                                                           *)
 (* ------------------------------------------------------------------ *)
 
 (* ASCII 10 = newline. *)
@@ -178,7 +178,7 @@ Definition render_dot (ac : AssuranceCase) : string :=
     ++ "}" ++ nl.
 
 (* ------------------------------------------------------------------ *)
-(* 10. Signed evidence blobs                                            *)
+(* Signed evidence blobs                                                *)
 (* ------------------------------------------------------------------ *)
 
 Record SignedBlob : Type := {
