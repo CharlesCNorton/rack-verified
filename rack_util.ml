@@ -5,20 +5,17 @@
 
 open Rack
 
+let coq_bool_to_bool = function True -> true | False -> false
+
 let string_of_coq s =
   let buf = Buffer.create 64 in
   let rec go = function
     | EmptyString -> ()
     | String (Ascii (b0,b1,b2,b3,b4,b5,b6,b7), rest) ->
+      let b x = if coq_bool_to_bool x then 1 else 0 in
       let n =
-        (if b0 then 1 else 0) lor
-        (if b1 then 2 else 0) lor
-        (if b2 then 4 else 0) lor
-        (if b3 then 8 else 0) lor
-        (if b4 then 16 else 0) lor
-        (if b5 then 32 else 0) lor
-        (if b6 then 64 else 0) lor
-        (if b7 then 128 else 0)
+        (b b0) lor (b b1 lsl 1) lor (b b2 lsl 2) lor (b b3 lsl 3) lor
+        (b b4 lsl 4) lor (b b5 lsl 5) lor (b b6 lsl 6) lor (b b7 lsl 7)
       in
       Buffer.add_char buf (Char.chr n);
       go rest
@@ -32,7 +29,7 @@ let coq_of_string s =
     if i >= len then EmptyString
     else
       let c = Char.code s.[i] in
-      let bit n = if c land (1 lsl n) <> 0 then True else False in
+      let bit n = if c land (1 lsl n) <> 0 then Rack.True else Rack.False in
       String (Ascii (bit 0, bit 1, bit 2, bit 3,
                      bit 4, bit 5, bit 6, bit 7),
               go (i + 1))
@@ -68,13 +65,15 @@ let fnv1a s =
 let make_keyed_validator secret =
   fun coq_blob ->
     let blob = string_of_coq coq_blob in
-    match String.rindex_opt blob ':' with
+    let ok = match String.rindex_opt blob ':' with
     | None -> false
     | Some i ->
       let payload = String.sub blob 0 i in
       let sig_ = String.sub blob (i + 1) (String.length blob - i - 1) in
       let expected = fnv1a (secret ^ payload) in
       sig_ = expected
+    in
+    if ok then Rack.True else Rack.False
 
 (* Create a signed blob: "payload:fnv1a(secret+payload)" *)
 let sign_blob secret payload =

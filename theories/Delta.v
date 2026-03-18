@@ -298,3 +298,111 @@ Proof.
            (fold_left apply_node_change d1.(ad_node_changes) ac)
            Hadd).
 Qed.
+
+(* ================================================================== *)
+(* RemoveNode commutation under disjointness                          *)
+(* ================================================================== *)
+
+(** A RemoveNode and a link change commute when the added link
+    does not reference the removed node. *)
+Definition node_link_disjoint (nc : NodeChange) (lc : LinkChange) : bool :=
+  match nc with
+  | RemoveNode id =>
+    match lc with
+    | AddLink l =>
+      negb (String.eqb l.(link_from) id) &&
+      negb (String.eqb l.(link_to) id)
+    | RemoveLink _ _ => true
+    end
+  | _ => true
+  end.
+
+(** filter commutes with filter (standard). *)
+Lemma filter_comm : forall {A} (f g : A -> bool) (l : list A),
+    filter f (filter g l) = filter g (filter f l).
+Proof.
+  intros A f g l. induction l as [|a l' IH]; simpl.
+  - reflexivity.
+  - destruct (g a) eqn:Hg; destruct (f a) eqn:Hf;
+      simpl; try rewrite Hg; try rewrite Hf; try rewrite IH; reflexivity.
+Qed.
+
+(** filter distributes over app (standard). *)
+Lemma filter_app : forall {A} (f : A -> bool) (l1 l2 : list A),
+    filter f (l1 ++ l2) = filter f l1 ++ filter f l2.
+Proof.
+  intros A f l1. induction l1 as [|a l1' IH]; intro l2; simpl.
+  - reflexivity.
+  - destruct (f a); [simpl; f_equal |]; exact (IH l2).
+Qed.
+
+(** General node-link commutation under disjointness. *)
+Lemma anc_alc_commute_general : forall ac nc lc,
+    node_link_disjoint nc lc = true ->
+    apply_link_change (apply_node_change ac nc) lc =
+    apply_node_change (apply_link_change ac lc) nc.
+Proof.
+  intros ac nc lc Hdisj.
+  destruct nc as [n | id | id ev];
+    destruct lc as [l | from to]; destruct ac as [ns ls tp]; simpl in *;
+    try reflexivity.
+  - (* RemoveNode + AddLink: need link not to reference removed node *)
+    apply Bool.andb_true_iff in Hdisj. destruct Hdisj as [Hf Ht].
+    f_equal.
+    rewrite filter_app. simpl.
+    rewrite Hf, Ht. simpl. reflexivity.
+  - (* RemoveNode + RemoveLink: filters commute *)
+    f_equal. apply filter_comm.
+Qed.
+
+(** Pairwise disjointness between all node changes and a link change. *)
+Definition all_node_link_disjoint (ncs : list NodeChange) (lc : LinkChange) : bool :=
+  forallb (fun nc => node_link_disjoint nc lc) ncs.
+
+(** Lift to fold_left of node changes. *)
+Lemma fold_anc_alc_commute_general : forall ncs ac lc,
+    all_node_link_disjoint ncs lc = true ->
+    fold_left apply_node_change ncs (apply_link_change ac lc) =
+    apply_link_change (fold_left apply_node_change ncs ac) lc.
+Proof.
+  induction ncs as [|nc ncs' IH]; intros ac lc Hdisj.
+  - reflexivity.
+  - simpl in Hdisj. apply Bool.andb_true_iff in Hdisj.
+    destruct Hdisj as [Hnc Hrest].
+    simpl. rewrite <- (anc_alc_commute_general ac nc lc Hnc).
+    exact (IH _ _ Hrest).
+Qed.
+
+(** General delta composition under pairwise disjointness. *)
+Definition deltas_disjoint (d1 d2 : AssuranceDelta) : bool :=
+  forallb (fun lc =>
+    forallb (fun nc => node_link_disjoint nc lc)
+            d2.(ad_node_changes))
+  d1.(ad_link_changes).
+
+Lemma fold_alc_fold_anc_commute_general : forall lcs ncs ac,
+    forallb (fun lc =>
+      forallb (fun nc => node_link_disjoint nc lc) ncs) lcs = true ->
+    fold_left apply_link_change lcs (fold_left apply_node_change ncs ac) =
+    fold_left apply_node_change ncs (fold_left apply_link_change lcs ac).
+Proof.
+  induction lcs as [|lc lcs' IH]; intros ncs ac Hdisj.
+  - reflexivity.
+  - simpl. simpl in Hdisj. apply Bool.andb_true_iff in Hdisj.
+    destruct Hdisj as [Hlc Hrest].
+    rewrite <- (fold_anc_alc_commute_general ncs ac lc Hlc).
+    exact (IH ncs (apply_link_change ac lc) Hrest).
+Qed.
+
+Theorem apply_delta_compose_general : forall ac d1 d2,
+    deltas_disjoint d1 d2 = true ->
+    apply_delta ac (compose_deltas d1 d2) =
+    apply_delta (apply_delta ac d1) d2.
+Proof.
+  intros ac d1 d2 Hdisj. unfold apply_delta, compose_deltas. simpl.
+  do 2 rewrite fold_left_app.
+  apply (f_equal (fold_left apply_link_change d2.(ad_link_changes))).
+  exact (fold_alc_fold_anc_commute_general
+           d1.(ad_link_changes) d2.(ad_node_changes)
+           (fold_left apply_node_change d1.(ad_node_changes) ac) Hdisj).
+Qed.

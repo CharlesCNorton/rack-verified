@@ -258,8 +258,35 @@ Proof.
     rewrite Ha in H. discriminate.
 Qed.
 
-(** For concrete assurance cases, the BST refinement is verified
-    computationally using [check_bst_refines].  The general proof
-    requires [String.compare] properties that are awkward under
-    Rocq 9's reduction strategy; concrete verification via
-    [vm_compute] sidesteps this entirely. *)
+(** Equation lemmas for controlled unfolding (avoids simpl/cbn
+    expanding String.compare). *)
+Lemma bst_find_leaf : forall id,
+    bst_find id BSTLeaf = None.
+Proof. reflexivity. Qed.
+
+Lemma bst_find_node : forall id l k v r,
+    bst_find id (BSTNode l k v r) =
+    match String.compare id k with
+    | Lt => bst_find id l | Eq => Some v | Gt => bst_find id r
+    end.
+Proof. reflexivity. Qed.
+
+Lemma bst_insert_leaf : forall id n,
+    bst_insert id n BSTLeaf = BSTNode BSTLeaf id n BSTLeaf.
+Proof. reflexivity. Qed.
+
+Lemma bst_insert_node : forall id n l k v r,
+    bst_insert id n (BSTNode l k v r) =
+    match String.compare id k with
+    | Lt => BSTNode (bst_insert id n l) k v r
+    | Eq => BSTNode l id n r
+    | Gt => BSTNode l k v (bst_insert id n r)
+    end.
+Proof. reflexivity. Qed.
+
+(** The general [bst_insert_find] and [build_bst_index_correct]
+    proofs require [rewrite] to match [String.compare] under the
+    [?=] notation, which Rocq 9's tactic engine rejects.  The
+    equation lemmas above provide the unfolding identities; the
+    algebraic chain is verified computationally for each concrete
+    case via [check_bst_refines]. *)

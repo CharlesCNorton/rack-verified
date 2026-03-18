@@ -1,15 +1,20 @@
 (* test_rack.ml — exercise the extracted RACK library *)
 
+let to_bool : Rack.bool -> Stdlib.Bool.t = function
+  | Rack.True -> true
+  | Rack.False -> false
+
 open Rack
 open Rack_util
 
-let assert_true label b =
-  if b then Printf.printf "  PASS  %s\n" label
-  else (Printf.printf "  FAIL  %s\n" label; exit 1)
+let pass label = Printf.printf "  PASS  %s\n" label
+let fail label = Printf.printf "  FAIL  %s\n" label; Stdlib.exit 1
 
-let assert_false label b =
-  if not b then Printf.printf "  PASS  %s\n" label
-  else (Printf.printf "  FAIL  %s\n" label; exit 1)
+let assert_true label b = if b then pass label else fail label
+let assert_false label b = if not b then pass label else fail label
+let assert_coq_true label b = assert_true label (to_bool b)
+let assert_coq_false label b = assert_false label (to_bool b)
+let assert_true_native = assert_true
 
 (* --- build a small assurance case --- *)
 
@@ -48,55 +53,55 @@ let () =
 
   (* check_well_formed *)
   Printf.printf "\n[check_well_formed]\n";
-  assert_true "well-formed simple case" (check_well_formed ac);
+  assert_coq_true "well-formed simple case" (check_well_formed ac);
 
   (* structural_checks *)
   Printf.printf "\n[structural_checks]\n";
-  assert_true "structural simple case" (structural_checks ac);
+  assert_coq_true "structural simple case" (structural_checks ac);
 
   (* check_support_tree *)
   Printf.printf "\n[check_support_tree]\n";
-  assert_true "support tree simple case"
+  assert_coq_true "support tree simple case"
     (check_support_tree ac (coq_of_string "G1"));
 
   (* compute_support_witness *)
   Printf.printf "\n[compute_support_witness]\n";
-  assert_true "witness exists"
+  assert_true_native "witness exists"
     (match compute_support_witness ac (coq_of_string "G1") with
      | Some _ -> true | None -> false);
 
   (* find_node *)
   Printf.printf "\n[find_node / find_node_indexed]\n";
   let idx = build_node_index ac in
-  assert_true "find_node G1"
+  assert_true_native "find_node G1"
     (match find_node ac (coq_of_string "G1") with
      | Some _ -> true | None -> false);
-  assert_true "find_node_indexed G1"
+  assert_true_native "find_node_indexed G1"
     (match find_node_indexed idx (coq_of_string "G1") with
      | Some _ -> true | None -> false);
 
   (* evidence_label *)
   Printf.printf "\n[evidence_label]\n";
   let lbl = evidence_label (ProofTerm (coq_of_string "my_thm", None)) in
-  assert_true "label is my_thm"
+  assert_true_native "label is my_thm"
     (string_of_coq lbl = "my_thm");
 
   (* evidence_runtime_check *)
   Printf.printf "\n[evidence_runtime_check]\n";
-  assert_true "ProofTerm None -> true"
+  assert_coq_true "ProofTerm None -> true"
     (evidence_runtime_check (ProofTerm (coq_of_string "x", None)));
-  assert_true "ProofTerm Some -> calls thunk"
+  assert_coq_true "ProofTerm Some -> calls thunk"
     (evidence_runtime_check (ProofTerm (coq_of_string "x",
-      Some (fun () -> true))));
-  let v = fun s -> s = coq_of_string "ok" in
-  assert_true "Certificate valid"
+      Some (fun _ -> True))));
+  let v = fun s -> if s = coq_of_string "ok" then True else False in
+  assert_coq_true "Certificate valid"
     (evidence_runtime_check (Certificate (coq_of_string "ok",
       coq_of_string "test-tool", v)));
 
   (* evidence_tool *)
   Printf.printf "\n[evidence_tool]\n";
   let tool = evidence_tool (Certificate (coq_of_string "blob",
-    coq_of_string "CBMC", fun _ -> true)) in
+    coq_of_string "CBMC", fun _ -> True)) in
   assert_true "tool is CBMC"
     (string_of_coq tool = "CBMC");
 
@@ -159,8 +164,8 @@ let () =
     ac_top = coq_of_string "G-parent";
   } in
   let composed = compose_cases parent ac (coq_of_string "G-parent") in
-  assert_true "composed well-formed" (check_well_formed composed);
-  assert_true "composed structural" (structural_checks composed);
+  assert_coq_true "composed well-formed" (check_well_formed composed);
+  assert_coq_true "composed structural" (structural_checks composed);
 
   (* diagnose_all *)
   Printf.printf "\n[diagnose_all]\n";
@@ -170,9 +175,9 @@ let () =
 
   (* check_node / check_link *)
   Printf.printf "\n[check_node / check_link]\n";
-  assert_true "check_node G1"
+  assert_coq_true "check_node G1"
     (check_node ac (coq_of_string "G1"));
-  assert_true "check_link"
+  assert_coq_true "check_link"
     (check_link ac link1);
 
   (* streaming export *)
@@ -206,7 +211,7 @@ let () =
     ac_links = Cons (link1, Nil);
     ac_top = coq_of_string "G1";
   } in
-  assert_false "dangling link rejected" (check_well_formed bad);
+  assert_coq_false "dangling link rejected" (check_well_formed bad);
   (match diagnose_all bad with
    | Nil -> assert_true "diagnose finds errors" false
    | _ -> assert_true "diagnose finds errors" true);
@@ -217,11 +222,11 @@ let () =
   let payload = "CBMC:all_assertions_hold:v6.0" in
   let signed = Rack_util.sign_blob secret payload in
   let validator = Rack_util.make_keyed_validator secret in
-  assert_true "signed blob validates"
+  assert_coq_true "signed blob validates"
     (validator (coq_of_string signed));
-  assert_false "tampered blob rejected"
+  assert_coq_false "tampered blob rejected"
     (validator (coq_of_string (signed ^ "x")));
-  assert_false "wrong secret rejected"
+  assert_coq_false "wrong secret rejected"
     ((Rack_util.make_keyed_validator "wrong-key") (coq_of_string signed));
 
   (* keyed validator as Certificate evidence *)
@@ -229,7 +234,7 @@ let () =
   let keyed_cert = Certificate (coq_of_string signed,
     coq_of_string "CBMC",
     Rack_util.make_keyed_validator secret) in
-  assert_true "keyed cert runtime check"
+  assert_coq_true "keyed cert runtime check"
     (evidence_runtime_check keyed_cert);
   assert_true "keyed cert tool is CBMC"
     (string_of_coq (evidence_tool keyed_cert) = "CBMC");

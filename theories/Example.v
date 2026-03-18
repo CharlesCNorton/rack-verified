@@ -6,6 +6,8 @@ From RACK Require Import Core.
 From RACK Require Import Main.
 From RACK Require Import Reflect.
 From RACK Require Import Export.
+From RACK Require Import Incremental.
+From RACK Require Import Delta.
 Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
@@ -841,10 +843,13 @@ Example mt_check_link :
 Require Extraction.
 Extraction Language OCaml.
 
-(* Efficient extraction directives *)
-Extract Inlined Constant Nat.eqb => "(=)".
-Extract Inlined Constant Nat.ltb => "(<)".
-Extract Inlined Constant Nat.leb => "(<=)".
+(* Extraction directives: wrap OCaml comparisons to return extracted bool *)
+Extract Inlined Constant Nat.eqb =>
+  "(fun a b -> if a = b then True else False)".
+Extract Inlined Constant Nat.ltb =>
+  "(fun a b -> if a < b then True else False)".
+Extract Inlined Constant Nat.leb =>
+  "(fun a b -> if a <= b then True else False)".
 
 Extraction "rack" render_assurance_case render_assurance_case_pretty
                    render_dot render_dot_with_options default_dot_options
@@ -873,4 +878,7 @@ Extraction "rack" render_assurance_case render_assurance_case_pretty
                    registry_lookup make_certificate
                    render_json_ext json_to_ext ext_to_json
                    metadata_to_json xml_escape
-                   is_ascii_string string_ltb check_date_format.
+                   is_ascii_string string_ltb check_date_format
+                   parse_json_err parse_ok parse_result_json
+                   find_node_bst build_bst_index check_bst_refines
+                   additive_delta additive_node_change.

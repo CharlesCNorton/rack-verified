@@ -226,3 +226,11 @@ Proof.
   intro H. destruct H as [HP [HQ [HR [HS [HT _]]]]].
   exact (conj HP (conj HQ (conj HR (conj HS HT)))).
 Defined.
+
+(* ================================================================== *)
+(* Hint Extern for broader Entails resolution                         *)
+(* ================================================================== *)
+
+(** When no typeclass instance fires, fall back to [vm_compute; tauto]. *)
+Global Hint Extern 10 (Entails _ _) =>
+  intro; vm_compute; tauto : typeclass_instances.

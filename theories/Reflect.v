@@ -1698,11 +1698,93 @@ Proof.
   exact (diag_uid_go_nil_nodupb [] _ H).
 Qed.
 
-(** Combined completeness: diagnose_structural returns [] implies
-    structural_checks returns true, given that the topological
-    order verifies.  The topo_order precondition is needed because
-    diagnose_acyclic falls back to BFS when verify_topo_order fails,
-    and BFS completeness is not proved here. *)
+(* ================================================================== *)
+(* BFS monotonicity                                                   *)
+(* ================================================================== *)
+
+(** BFS result grows with fuel: more fuel means a superset. *)
+Lemma rsf_fuel_mono : forall ac f1 f2 frontier acc,
+    f1 <= f2 ->
+    forall x, In x (reachable_set_fuel ac f1 frontier acc) ->
+              In x (reachable_set_fuel ac f2 frontier acc).
+Proof.
+  intros ac f1. induction f1 as [|f1' IH]; intros f2 frontier acc Hle x Hin.
+  - simpl in Hin. exact (rsf_acc_subset ac f2 frontier acc x Hin).
+  - destruct f2 as [|f2']; [inversion Hle |].
+    apply Nat.succ_le_mono in Hle.
+    simpl in Hin |- *.
+    remember (filter (fun id => negb (mem_string id acc))
+               (flat_map (supportedby_children ac) frontier)) as fresh.
+    destruct fresh as [|h t].
+    + exact Hin.
+    + apply IH; [exact Hle | exact Hin].
+Qed.
+
+(** BFS completeness: single-step children of accumulated nodes
+    are in the result (with enough fuel). *)
+Lemma rsf_child_in_result : forall ac fuel frontier acc w v,
+    In w frontier ->
+    In v (supportedby_children ac w) ->
+    In v (reachable_set_fuel ac (S fuel) frontier acc).
+Proof.
+  intros ac fuel frontier acc w v Hw Hv.
+  simpl.
+  remember (filter (fun id => negb (mem_string id acc))
+             (flat_map (supportedby_children ac) frontier)) as fresh.
+  destruct (mem_string v acc) eqn:Hmem.
+  - (* v already in acc *)
+    destruct fresh.
+    + exact (existsb_In v acc Hmem).
+    + apply rsf_acc_subset. apply in_or_app. left.
+      exact (existsb_In v acc Hmem).
+  - (* v is fresh *)
+    destruct fresh as [|h t] eqn:Hfresh.
+    + (* no fresh nodes: v must be in acc *)
+      exfalso.
+      assert (Hin : In v (flat_map (supportedby_children ac) frontier)).
+      { apply in_flat_map. exists w. exact (conj Hw Hv). }
+      assert (Hfilt : In v (filter (fun id => negb (mem_string id acc))
+                             (flat_map (supportedby_children ac) frontier))).
+      { apply filter_In. split; [exact Hin |]. rewrite Hmem. reflexivity. }
+      rewrite <- Heqfresh in Hfilt. destruct Hfilt.
+    + apply rsf_acc_subset. apply in_or_app. right.
+      rewrite Heqfresh.
+      apply filter_In. split.
+      * apply in_flat_map. exists w. exact (conj Hw Hv).
+      * rewrite Hmem. reflexivity.
+Qed.
+
+(** BFS completeness: all directly reachable nodes are captured. *)
+Theorem reaches_in_reachable_from : forall ac start v,
+    Reaches ac start v ->
+    In v (reachable_from ac start).
+Proof.
+  intros ac start v H.
+  unfold reachable_from.
+  induction H as [u v0 Hin | u w v0 H1 IH1 H2 IH2].
+  - (* R_Step: v0 is a child of start *)
+    apply rsf_acc_subset. exact Hin.
+  - (* R_Trans: use the fact that BFS explores all levels *)
+    (* w is in reachable_from start.
+       v0 is reachable from w.
+       We need v0 in reachable_from start.
+       This requires BFS to have explored w's children.
+       General proof requires tracking BFS levels — for now,
+       we establish the result for concrete cases via the
+       level-bounded variant below. *)
+    (* The full proof requires showing the BFS frontier
+       progresses through all reachable nodes within
+       fuel = length ac_nodes steps. *)
+Abort.
+
+(** For concrete cases, BFS completeness can be verified
+    computationally.  The general transitivity case requires
+    BFS level tracking infrastructure; the single-step case
+    ([rsf_child_in_result]) and monotonicity ([rsf_fuel_mono])
+    are proved above. *)
+
+(** Combined completeness (unchanged — topo precondition still needed
+    until the full BFS closure proof is completed). *)
 Theorem diagnose_structural_complete : forall ac,
     diagnose_structural ac = [] ->
     verify_topo_order ac (topo_sort ac) = true ->
