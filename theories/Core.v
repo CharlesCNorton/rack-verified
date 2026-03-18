@@ -839,11 +839,14 @@ Proof.
                       (Hindeg start Hstart))). }
     destruct (pred_chain ac remaining f next) as [|y rest] eqn:Hchain.
     + destruct Hin.
-    + destruct Hin as [<- | Hin'].
-      * (* x = y = next *)
-        exact (R_Step ac next start Hedge).
-      * (* x in tail of sub-chain *)
-        assert (Hin_tl : In x (tl (pred_chain ac remaining f next))).
+    + assert (Hy : y = next).
+      { assert (H : hd_error (pred_chain ac remaining f next) = Some next)
+          by (destruct f; reflexivity).
+        rewrite Hchain in H. simpl in H. injection H. auto. }
+      subst y.
+      destruct Hin as [<- | Hin'].
+      * exact (R_Step ac next start Hedge).
+      * assert (Hin_tl : In x (tl (pred_chain ac remaining f next))).
         { rewrite Hchain. exact Hin'. }
         exact (R_Trans ac x next start
                  (IH ac remaining next x Hindeg Hnext_in Hin_tl)
@@ -860,31 +863,28 @@ Lemma pred_chain_nodup : forall fuel ac remaining start,
 Proof.
   induction fuel as [|f IH]; intros ac remaining start Hacyc Hindeg Hstart.
   - simpl. constructor; [exact (fun H => H) | constructor].
-  - simpl. constructor.
+  - remember (extract_predecessor ac remaining start) as next eqn:Enext.
+    assert (Hnext_in : In next remaining).
+    { subst next. exact (proj1 (extract_predecessor_valid ac remaining start
+                      (Hindeg start Hstart))). }
+    assert (Hedge : In start (supportedby_children ac next)).
+    { subst next. exact (proj2 (extract_predecessor_valid ac remaining start
+                      (Hindeg start Hstart))). }
+    simpl. rewrite <- Enext. constructor.
     + intro Hin.
-      set (next := extract_predecessor ac remaining start) in *.
-      assert (Hnext_in : In next remaining).
-      { exact (proj1 (extract_predecessor_valid ac remaining start
-                        (Hindeg start Hstart))). }
-      assert (Hedge : In start (supportedby_children ac next)).
-      { exact (proj2 (extract_predecessor_valid ac remaining start
-                        (Hindeg start Hstart))). }
       destruct (pred_chain ac remaining f next) as [|y rest] eqn:Hchain.
       * destruct Hin.
-      * destruct Hin as [<- | Hin'].
-        -- (* start = next: self-loop *)
-           exact (Hacyc start (R_Step ac start start Hedge)).
-        -- (* start in tail: cycle via predecessor chain *)
-           assert (Hin_tl : In start (tl (pred_chain ac remaining f next))).
+      * assert (Hy : y = next) by (destruct f; simpl in Hchain; injection Hchain; auto).
+        subst y. destruct Hin as [Heq | Hin'].
+        -- subst start. exact (Hacyc next (R_Step ac next next Hedge)).
+        -- assert (Hin_tl : In start (tl (pred_chain ac remaining f next))).
            { rewrite Hchain. exact Hin'. }
            exact (Hacyc start
                     (R_Trans ac start next start
                        (pred_chain_reaches f ac remaining next start
                           Hindeg Hnext_in Hin_tl)
                        (R_Step ac next start Hedge))).
-    + apply IH; [exact Hacyc | exact Hindeg |].
-      exact (proj1 (extract_predecessor_valid ac remaining start
-                      (Hindeg start Hstart))).
+    + apply IH; [exact Hacyc | exact Hindeg | exact Hnext_in].
 Qed.
 
 (* Pigeonhole helper *)
@@ -940,8 +940,10 @@ Proof.
           remaining = true).
         { apply existsb_exists. exists id. exact (conj Hid E). }
         rewrite Hex' in Hex. discriminate. }
-      apply Nat.eqb_neq in Hnz. apply Nat.lt_eq_cases in (Nat.le_0_l (sb_in_degree ac remaining id)).
-      destruct H as [H | H]; [exact H | exfalso; exact (Hnz (eq_sym H))]. }
+      apply Nat.eqb_neq in Hnz.
+      destruct (sb_in_degree ac remaining id) as [|k].
+      + exfalso. exact (Hnz eq_refl).
+      + apply Nat.lt_0_succ. }
     destruct remaining as [|r0 rs]; [exact (Hne eq_refl) |].
     pose proof (pred_chain_nodup
                   (length (r0 :: rs))
@@ -956,7 +958,201 @@ Proof.
     exact (Nat.nle_succ_diag_l _ Habs).
 Qed.
 
-(* check_well_formed is defined below, after check_defeaters. *)
+(* ------------------------------------------------------------------ *)
+(* topo_sort_go helpers                                                *)
+(* ------------------------------------------------------------------ *)
+
+Lemma existsb_find : forall {A : Type} (f : A -> bool) (l : list A),
+    existsb f l = true -> exists x, find f l = Some x /\ f x = true.
+Proof.
+  induction l as [|a l' IH]; simpl; intro H.
+  - discriminate.
+  - apply Bool.orb_true_iff in H. destruct H as [H | H].
+    + exists a. rewrite H. auto.
+    + destruct (f a) eqn:E.
+      * exists a. auto.
+      * destruct (IH H) as [x [Hf Hx]]. exists x. auto.
+Qed.
+
+Lemma find_zero_indeg : forall ac remaining,
+    remaining <> [] ->
+    (forall id, In id remaining ->
+      In id (map node_id ac.(ac_nodes))) ->
+    Acyclic ac ->
+    exists id,
+      find (fun id0 => Nat.eqb (sb_in_degree ac remaining id0) 0)
+           remaining = Some id.
+Proof.
+  intros ac remaining Hne Hin Hacyc.
+  destruct (acyclic_has_zero_indeg ac remaining Hne Hin Hacyc)
+    as [id [Hid Hdeg]].
+  assert (Hex : existsb (fun id0 => Nat.eqb (sb_in_degree ac remaining id0) 0)
+                  remaining = true).
+  { apply existsb_exists. exists id. split; [exact Hid |].
+    apply Nat.eqb_eq. exact Hdeg. }
+  destruct (existsb_find _ _ Hex) as [x [Hfind _]].
+  exists x. exact Hfind.
+Qed.
+
+Lemma filter_remove_In : forall id remaining x,
+    In x (filter (fun x0 => negb (String.eqb x0 id)) remaining) ->
+    In x remaining /\ x <> id.
+Proof.
+  intros id remaining x H.
+  apply filter_In in H. destruct H as [Hin Hneq].
+  split; [exact Hin |].
+  intro Heq. subst. rewrite String.eqb_refl in Hneq. discriminate.
+Qed.
+
+Lemma filter_remove_length : forall id remaining,
+    In id remaining -> NoDup remaining ->
+    length (filter (fun x => negb (String.eqb x id)) remaining) < length remaining.
+Proof.
+  induction remaining as [|a rest IH]; intros Hin Hnd.
+  - destruct Hin.
+  - inversion Hnd as [| ? ? Hna Hnd']; subst.
+    simpl. destruct (String.eqb a id) eqn:E.
+    + simpl. apply Nat.lt_succ_r.
+      apply filter_length_le.
+    + simpl. apply -> Nat.succ_lt_mono.
+      apply IH; [| exact Hnd'].
+      destruct Hin as [<- | Hin].
+      * rewrite String.eqb_refl in E. discriminate.
+      * exact Hin.
+Qed.
+
+Lemma find_In : forall {A : Type} (f : A -> bool) (l : list A) x,
+    find f l = Some x -> In x l.
+Proof.
+  induction l as [|a l' IH]; simpl; intros x H.
+  - discriminate.
+  - destruct (f a) eqn:E.
+    + injection H as <-. left. reflexivity.
+    + right. exact (IH x H).
+Qed.
+
+Lemma In_filter_remove : forall id remaining x,
+    In x remaining -> x <> id ->
+    In x (filter (fun x0 => negb (String.eqb x0 id)) remaining).
+Proof.
+  intros id remaining x Hin Hneq.
+  apply filter_In. split; [exact Hin |].
+  destruct (String.eqb x id) eqn:E; [| reflexivity].
+  apply String.eqb_eq in E. exfalso. exact (Hneq E).
+Qed.
+
+Lemma NoDup_filter : forall {A : Type} (f : A -> bool) (l : list A),
+    NoDup l -> NoDup (filter f l).
+Proof.
+  induction l as [|a l' IH]; intro Hnd; simpl.
+  - constructor.
+  - inversion Hnd as [| ? ? Hna Hnd']; subst.
+    destruct (f a) eqn:E.
+    + constructor; [| exact (IH Hnd')].
+      intro H. apply filter_In in H.
+      exact (Hna (proj1 H)).
+    + exact (IH Hnd').
+Qed.
+
+(* ------------------------------------------------------------------ *)
+(* topo_sort_complete                                                  *)
+(* ------------------------------------------------------------------ *)
+
+(* Coverage: topo_sort_go returns acc ++ elements from remaining *)
+Lemma topo_sort_go_acc_prefix : forall ac fuel remaining acc x,
+    In x acc -> In x (topo_sort_go ac fuel remaining acc).
+Proof.
+  intros ac fuel. induction fuel as [|f IH]; intros remaining acc x Hin; simpl.
+  - exact Hin.
+  - destruct (find _ remaining) as [id|].
+    + apply IH. apply in_or_app. left. exact Hin.
+    + exact Hin.
+Qed.
+
+Lemma topo_sort_go_remaining : forall ac fuel remaining acc x,
+    Acyclic ac ->
+    (forall id, In id remaining ->
+      In id (map node_id ac.(ac_nodes))) ->
+    NoDup remaining ->
+    fuel >= length remaining ->
+    In x remaining ->
+    In x (topo_sort_go ac fuel remaining acc).
+Proof.
+  intros ac fuel. induction fuel as [|f IH];
+    intros remaining acc x Hacyc Hin_nodes Hnd Hfuel Hx.
+  - destruct remaining; [destruct Hx | simpl in Hfuel; inversion Hfuel].
+  - simpl.
+    destruct remaining as [|r0 rest] eqn:Hrem.
+    + destruct Hx.
+    + destruct (find (fun id => Nat.eqb (sb_in_degree ac (r0 :: rest) id) 0)
+                  (r0 :: rest)) as [id|] eqn:Hfind.
+      * assert (Hid_in : In id (r0 :: rest)) by exact (find_In _ _ _ Hfind).
+        destruct (String.eqb x id) eqn:Exid.
+        -- apply String.eqb_eq in Exid. subst.
+           apply topo_sort_go_acc_prefix. apply in_or_app. right. left. reflexivity.
+        -- apply IH.
+           ++ exact Hacyc.
+           ++ intros id' Hid'. apply filter_remove_In in Hid'.
+              exact (Hin_nodes _ (proj1 Hid')).
+           ++ exact (NoDup_filter _ _ Hnd).
+           ++ assert (Hlt : length (filter (fun x0 => negb (String.eqb x0 id))
+                              (r0 :: rest)) < length (r0 :: rest)).
+              { exact (filter_remove_length id (r0 :: rest) Hid_in Hnd). }
+              apply Nat.lt_succ_r.
+              apply Nat.lt_le_trans with (length (r0 :: rest)); [exact Hlt |].
+              exact Hfuel.
+           ++ apply In_filter_remove; [exact Hx |].
+              intro Heq. subst.
+              rewrite String.eqb_refl in Exid. discriminate.
+      * (* find = None: contradicts acyclic_has_zero_indeg *)
+        exfalso.
+        destruct (find_zero_indeg ac (r0 :: rest) ltac:(discriminate) Hin_nodes Hacyc)
+          as [id' Hfind'].
+        rewrite Hfind in Hfind'. discriminate.
+Qed.
+
+Lemma topo_sort_go_nodup : forall ac fuel remaining acc,
+    Acyclic ac ->
+    (forall id, In id remaining ->
+      In id (map node_id ac.(ac_nodes))) ->
+    NoDup remaining ->
+    NoDup acc ->
+    (forall x, In x acc -> ~ In x remaining) ->
+    fuel >= length remaining ->
+    NoDup (topo_sort_go ac fuel remaining acc).
+Proof.
+  intros ac fuel. induction fuel as [|f IH];
+    intros remaining acc Hacyc Hin_nodes Hnd_rem Hnd_acc Hdisj Hfuel.
+  - destruct remaining; [exact Hnd_acc | simpl in Hfuel; inversion Hfuel].
+  - simpl.
+    destruct remaining as [|r0 rest] eqn:Hrem.
+    + exact Hnd_acc.
+    + destruct (find (fun id => Nat.eqb (sb_in_degree ac (r0 :: rest) id) 0)
+                  (r0 :: rest)) as [id|] eqn:Hfind.
+      * assert (Hid_in : In id (r0 :: rest)) by exact (find_In _ _ _ Hfind).
+        apply IH.
+        -- exact Hacyc.
+        -- intros id' Hid'. apply filter_remove_In in Hid'.
+           exact (Hin_nodes _ (proj1 Hid')).
+        -- exact (NoDup_filter _ _ Hnd_rem).
+        -- apply NoDup_app; [exact Hnd_acc | |].
+           ++ constructor; [| constructor].
+              intro H. destruct H.
+           ++ intros x Hacc [Heq | []]. subst x.
+              exact (Hdisj id Hacc Hid_in).
+        -- intros x Hx Hf.
+           apply in_app_or in Hx. apply filter_remove_In in Hf.
+           destruct Hx as [Hx | [Heq | []]].
+           ++ exact (Hdisj x Hx (proj1 Hf)).
+           ++ subst x. exact (proj2 Hf eq_refl).
+        -- assert (Hlt : length (filter (fun x0 => negb (String.eqb x0 id))
+                            (r0 :: rest)) < length (r0 :: rest)).
+           { exact (filter_remove_length id (r0 :: rest) Hid_in Hnd_rem). }
+           apply Nat.lt_succ_r.
+           apply Nat.lt_le_trans with (length (r0 :: rest)); [exact Hlt | exact Hfuel].
+      * exact Hnd_acc.
+Qed.
+
 
 (* ------------------------------------------------------------------ *)
 (* Identity entailment checker (partial decision procedure)             *)
