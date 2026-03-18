@@ -22,3 +22,9 @@ jobs:
             startGroup "Build"
             make
             endGroup
+            startGroup "Check extracted OCaml compiles"
+            ocamlfind ocamlopt -package str -c rack.mli rack.ml || \
+              ocamlfind ocamlc -package str -c rack.mli rack.ml || \
+              ocamlopt -c rack.mli rack.ml || \
+              ocamlc -c rack.mli rack.ml
+            endGroup

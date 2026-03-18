@@ -46,7 +46,28 @@ Definition ascii_eqb (a b : ascii) : bool :=
     Bool.eqb a4 b4 && Bool.eqb a5 b5 && Bool.eqb a6 b6 && Bool.eqb a7 b7
   end.
 
-(* Escape characters that are special in JSON strings: " and \. *)
+(* Control-character constants for JSON escaping.                      *)
+Definition nl_esc_char : ascii :=    (* 'n' = 0x6E *)
+  Ascii false true true true false true true false.
+Definition cr_char : ascii :=       (* CR = 0x0D *)
+  Ascii true false true true false false false false.
+Definition cr_esc_char : ascii :=   (* 'r' = 0x72 *)
+  Ascii false true false false true true true false.
+Definition tab_char : ascii :=      (* TAB = 0x09 *)
+  Ascii true false false true false false false false.
+Definition tab_esc_char : ascii :=  (* 't' = 0x74 *)
+  Ascii false false true false true true true false.
+Definition bs_char : ascii :=       (* BS = 0x08 *)
+  Ascii false false false true false false false false.
+Definition bs_esc_char : ascii :=   (* 'b' = 0x62 *)
+  Ascii false true false false false true true false.
+Definition ff_char : ascii :=       (* FF = 0x0C *)
+  Ascii false false true true false false false false.
+Definition ff_esc_char : ascii :=   (* 'f' = 0x66 *)
+  Ascii false true true false false true true false.
+
+(* Escape characters special in JSON strings: dquote, backslash,
+   and control characters (newline, carriage return, tab, etc.).        *)
 Fixpoint escape_json_chars (s : string) : string :=
   match s with
   | EmptyString => EmptyString
@@ -55,6 +76,16 @@ Fixpoint escape_json_chars (s : string) : string :=
       String backslash_char (String dquote_char (escape_json_chars rest))
     else if ascii_eqb c backslash_char then
       String backslash_char (String backslash_char (escape_json_chars rest))
+    else if ascii_eqb c nl_char then
+      String backslash_char (String nl_esc_char (escape_json_chars rest))
+    else if ascii_eqb c cr_char then
+      String backslash_char (String cr_esc_char (escape_json_chars rest))
+    else if ascii_eqb c tab_char then
+      String backslash_char (String tab_esc_char (escape_json_chars rest))
+    else if ascii_eqb c bs_char then
+      String backslash_char (String bs_esc_char (escape_json_chars rest))
+    else if ascii_eqb c ff_char then
+      String backslash_char (String ff_esc_char (escape_json_chars rest))
     else
       String c (escape_json_chars rest)
   end.
@@ -84,8 +115,8 @@ Definition node_kind_to_json (nk : NodeKind) : Json :=
 
 Definition evidence_to_json (e : Evidence) : Json :=
   match e with
-  | ProofTerm _ _ =>
-      JObj [("type", JStr "ProofTerm")]
+  | ProofTerm lbl _ _ =>
+      JObj [("type", JStr "ProofTerm"); ("label", JStr lbl)]
   | Certificate blob _ =>
       JObj [("type", JStr "Certificate"); ("blob", JStr blob)]
   end.
@@ -138,8 +169,10 @@ Fixpoint nat_to_string_go (fuel n : nat) (acc : string) : string :=
     end
   end.
 
+(* Fixed fuel of 20 — sufficient for any nat up to 10^20.
+   Avoids O(n) fuel construction in the Peano representation.          *)
 Definition nat_to_string (n : nat) : string :=
-  nat_to_string_go (S n) n EmptyString.
+  nat_to_string_go 20 n EmptyString.
 
 Fixpoint join_strings (sep : string) (ss : list string) : string :=
   match ss with
@@ -271,7 +304,8 @@ Definition node_kind_color (nk : NodeKind) : string :=
   end.
 
 Definition render_dot_node (n : Node) : string :=
-  "  " ++ json_quote n.(node_id) ++ " [label=" ++ json_quote n.(node_id)
+  let label := n.(node_id) ++ ": " ++ n.(node_claim_text) in
+  "  " ++ json_quote n.(node_id) ++ " [label=" ++ json_quote label
        ++ ",shape=" ++ node_kind_shape n.(node_kind)
        ++ ",style=filled,fillcolor=" ++ json_quote (node_kind_color n.(node_kind))
        ++ "];" ++ nl.

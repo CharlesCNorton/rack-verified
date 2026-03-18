@@ -35,17 +35,18 @@ Inductive NodeKind : Type :=
 
 (* Evidence must *witness* the node's own claim, not an arbitrary Prop. *)
 Inductive Evidence : Type :=
-  (* A Rocq proof term whose type IS the node's claim *)
-  | ProofTerm  : forall (P : Prop), P -> Evidence
+  (* A Rocq proof term whose type IS the node's claim.
+     The string label survives extraction, identifying what was proved. *)
+  | ProofTerm  : string -> forall (P : Prop), P -> Evidence
   (* External certificate: a raw blob plus a decidable validator *)
   | Certificate : string -> (string -> bool) -> Evidence.
 
 Record Node : Type := {
   node_id         : Id;
   node_kind       : NodeKind;
-  node_claim      : Prop;
   node_claim_text : string;   (* human-readable claim — survives extraction *)
   node_evidence   : option Evidence;
+  node_claim      : Prop;     (* logical claim — erased at extraction *)
 }.
 
 Inductive LinkKind : Type := SupportedBy | InContextOf.
@@ -95,7 +96,7 @@ Definition Acyclic (ac : AssuranceCase) : Prop :=
 
 Definition evidence_valid (n : Node) (e : Evidence) : Prop :=
   match e with
-  | ProofTerm P _   => P = n.(node_claim)
+  | ProofTerm _ P _   => P = n.(node_claim)
   | Certificate b v => v b = true
   end.
 
@@ -172,6 +173,23 @@ Definition no_dangling_links (ac : AssuranceCase) : Prop :=
     (exists n, find_node ac l.(link_to)   = Some n).
 
 (* ------------------------------------------------------------------ *)
+(* Context link type constraints                                        *)
+(* ------------------------------------------------------------------ *)
+
+(* InContextOf links must go FROM Goal/Strategy TO Context/Assumption/
+   Justification nodes.                                                  *)
+Definition well_typed_context_links (ac : AssuranceCase) : Prop :=
+  forall l,
+    In l ac.(ac_links) ->
+    l.(link_kind) = InContextOf ->
+    exists nf nt,
+      find_node ac l.(link_from) = Some nf /\
+      find_node ac l.(link_to)   = Some nt /\
+      (nf.(node_kind) = Goal \/ nf.(node_kind) = Strategy) /\
+      (nt.(node_kind) = Context \/ nt.(node_kind) = Assumption \/
+       nt.(node_kind) = Justification).
+
+(* ------------------------------------------------------------------ *)
 (* NoDup decision via boolean reflection                                *)
 (* ------------------------------------------------------------------ *)
 
@@ -233,6 +251,7 @@ Record WellFormed (ac : AssuranceCase) : Prop := {
          | None     => []
          end) kids
      in fold_right and True child_claims -> n.(node_claim));
+  wf_context_links : well_typed_context_links ac;
 }.
 
 (* ------------------------------------------------------------------ *)
@@ -290,7 +309,7 @@ Definition check_discharged (ac : AssuranceCase) : bool :=
       | Solution =>
         match n.(node_evidence) with
         | Some (Certificate b v) => v b
-        | Some (ProofTerm _ _) => true
+        | Some (ProofTerm _ _ _) => true
         | None => false
         end
       | Goal | Strategy =>
@@ -299,12 +318,44 @@ Definition check_discharged (ac : AssuranceCase) : bool :=
       end
     end) reachable.
 
+Definition check_context_links (ac : AssuranceCase) : bool :=
+  forallb (fun l =>
+    match l.(link_kind) with
+    | SupportedBy => true
+    | InContextOf =>
+      match find_node ac l.(link_from), find_node ac l.(link_to) with
+      | Some nf, Some nt =>
+        (match nf.(node_kind) with Goal | Strategy => true | _ => false end) &&
+        (match nt.(node_kind) with
+         | Context | Assumption | Justification => true | _ => false end)
+      | _, _ => false
+      end
+    end) ac.(ac_links).
+
+(* Stronger discharged check: verify ALL nodes, not just reachable ones.
+   Easier to reflect because it avoids BFS completeness arguments.       *)
+Definition check_all_discharged (ac : AssuranceCase) : bool :=
+  forallb (fun n =>
+    match n.(node_kind) with
+    | Solution =>
+      match n.(node_evidence) with
+      | Some (Certificate b v) => v b
+      | Some (ProofTerm _ _ _) => true
+      | None => false
+      end
+    | Goal | Strategy =>
+      negb (match supportedby_children ac n.(node_id) with
+            | [] => true | _ => false end)
+    | _ => true
+    end) ac.(ac_nodes).
+
 Definition check_well_formed (ac : AssuranceCase) : bool :=
   check_top_is_goal ac &&
   check_unique_ids ac &&
   check_no_dangling ac &&
   check_acyclic ac &&
-  check_discharged ac.
+  check_discharged ac &&
+  check_context_links ac.
 
 (* ------------------------------------------------------------------ *)
 (* Entailment automation                                                *)
@@ -320,6 +371,24 @@ Ltac solve_entailment find_equiv :=
       destruct c eqn:?;
       [ injection Hfind as <-;
         first [ vm_compute; tauto
+              | vm_compute; intuition
+              | vm_compute; firstorder
+              | exfalso; destruct Hkind as [? | ?]; discriminate ]
+      | ]
+  end;
+  try discriminate.
+
+(* Variant accepting a hint database name for custom entailments.       *)
+Ltac solve_entailment_with find_equiv db :=
+  intros ? ? Hfind Hkind;
+  rewrite find_equiv in Hfind;
+  repeat match type of Hfind with
+  | (if ?c then _ else _) = _ =>
+      destruct c eqn:?;
+      [ injection Hfind as <-;
+        first [ vm_compute; tauto
+              | vm_compute; intuition
+              | solve [vm_compute; eauto with db]
               | exfalso; destruct Hkind as [? | ?]; discriminate ]
       | ]
   end;
@@ -327,3 +396,100 @@ Ltac solve_entailment find_equiv :=
 
 (* Discharges NoDup obligations on concrete node lists.                 *)
 Ltac prove_nodup := apply nodupb_NoDup; vm_compute; reflexivity.
+
+(* ------------------------------------------------------------------ *)
+(* Topological ordering for acyclicity decision                         *)
+(* ------------------------------------------------------------------ *)
+
+Fixpoint index_of (s : string) (l : list string) : option nat :=
+  match l with
+  | [] => None
+  | x :: xs =>
+    if String.eqb s x then Some 0
+    else match index_of s xs with
+         | Some n => Some (S n)
+         | None => None
+         end
+  end.
+
+(* SupportedBy in-degree restricted to a set of remaining nodes.       *)
+Definition sb_in_degree (ac : AssuranceCase)
+    (remaining : list Id) (id : Id) : nat :=
+  length (filter (fun l =>
+    match l.(link_kind) with
+    | SupportedBy =>
+      String.eqb l.(link_to) id && mem_string l.(link_from) remaining
+    | InContextOf => false
+    end) ac.(ac_links)).
+
+(* Kahn's algorithm: peel zero-in-degree nodes.                        *)
+Fixpoint topo_sort_go (ac : AssuranceCase) (fuel : nat)
+    (remaining : list Id) (acc : list Id) : list Id :=
+  match fuel with
+  | 0 => acc
+  | S f =>
+    match find (fun id => Nat.eqb (sb_in_degree ac remaining id) 0)
+               remaining with
+    | None => acc
+    | Some id =>
+      let remaining' :=
+        filter (fun x => negb (String.eqb x id)) remaining in
+      topo_sort_go ac f remaining' (acc ++ [id])
+    end
+  end.
+
+Definition topo_sort (ac : AssuranceCase) : list Id :=
+  topo_sort_go ac (length ac.(ac_nodes))
+               (map node_id ac.(ac_nodes)) [].
+
+(* Verify a candidate topological order: every SupportedBy edge goes
+   from a lower to a higher index, all node IDs appear, no duplicates. *)
+Definition verify_topo_order (ac : AssuranceCase)
+    (order : list Id) : bool :=
+  forallb (fun l =>
+    match l.(link_kind) with
+    | InContextOf => true
+    | SupportedBy =>
+      match index_of l.(link_from) order,
+            index_of l.(link_to)   order with
+      | Some i, Some j => Nat.ltb i j
+      | _, _ => false
+      end
+    end) ac.(ac_links) &&
+  forallb (fun n => mem_string n.(node_id) order)
+          ac.(ac_nodes) &&
+  nodupb order.
+
+(* Combined structural checks: everything decidable except entailment
+   and ProofTerm-claim type matching.                                   *)
+Definition structural_checks (ac : AssuranceCase) : bool :=
+  check_top_is_goal ac &&
+  check_unique_ids ac &&
+  check_no_dangling ac &&
+  verify_topo_order ac (topo_sort ac) &&
+  check_all_discharged ac &&
+  check_context_links ac.
+
+(* ------------------------------------------------------------------ *)
+(* Compositional assembly                                               *)
+(* ------------------------------------------------------------------ *)
+
+(* Merge two assurance cases by concatenating their nodes and links,
+   adding a SupportedBy bridge from parent_goal to subcase_top.         *)
+Definition compose_cases (parent subcase : AssuranceCase)
+    (parent_goal : Id) : AssuranceCase := {|
+  ac_nodes := parent.(ac_nodes) ++ subcase.(ac_nodes);
+  ac_links := parent.(ac_links) ++ subcase.(ac_links) ++
+              [{| link_kind := SupportedBy;
+                  link_from := parent_goal;
+                  link_to   := subcase.(ac_top) |}];
+  ac_top   := parent.(ac_top);
+|}.
+
+(* Context-link helper: all InContextOf children of a node.            *)
+Definition context_children (ac : AssuranceCase) (id : Id) : list Id :=
+  map link_to
+    (filter (fun l => andb
+               (String.eqb l.(link_from) id)
+               (match l.(link_kind) with InContextOf => true | _ => false end))
+            ac.(ac_links)).

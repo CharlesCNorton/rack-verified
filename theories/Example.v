@@ -4,6 +4,7 @@
 
 From RACK Require Import Core.
 From RACK Require Import Main.
+From RACK Require Import Reflect.
 From RACK Require Import Export.
 Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
@@ -24,17 +25,17 @@ Definition ex_proof : ex_claim := eq_refl.
 Definition ex_goal : Node := {|
   node_id := "G1";
   node_kind := Goal;
-  node_claim := ex_claim;
   node_claim_text := "2 + 2 = 4";
   node_evidence := None;
+  node_claim := ex_claim;
 |}.
 
 Definition ex_solution : Node := {|
   node_id := "E1";
   node_kind := Solution;
-  node_claim := ex_claim;
   node_claim_text := "2 + 2 = 4";
-  node_evidence := Some (ProofTerm ex_claim ex_proof);
+  node_evidence := Some (ProofTerm "ex_claim" ex_claim ex_proof);
+  node_claim := ex_claim;
 |}.
 
 Definition ex_link : Link := {|
@@ -142,13 +143,19 @@ Lemma ex_entailment : forall id n,
      in fold_right and True child_claims -> n.(node_claim)).
 Proof. solve_entailment ex_find_node_equiv. Qed.
 
+Lemma ex_context_links : well_typed_context_links ex_ac.
+Proof.
+  intros l Hin Hkind. destruct Hin as [<- | []]. discriminate.
+Qed.
+
 Definition ex_wf : WellFormed ex_ac :=
   {| wf_top := ex_top_is_goal;
      wf_acyclic := ex_acyclic;
      wf_discharged := ex_discharged;
      wf_no_dangle := ex_no_dangle;
      wf_unique_ids := ltac:(prove_nodup);
-     wf_entailment := ex_entailment |}.
+     wf_entailment := ex_entailment;
+     wf_context_links := ex_context_links |}.
 
 Theorem ex_supported : SupportTree ex_ac "G1".
 Proof. exact (assurance_case_supported ex_ac ex_wf). Qed.
@@ -166,41 +173,42 @@ Definition ml_fuzz_claim : Prop := True.
 Definition ml_goal : Node := {|
   node_id := "G-sec";
   node_kind := Goal;
-  node_claim := ml_security_claim;
   node_claim_text := "System meets security requirements";
   node_evidence := None;
+  node_claim := ml_security_claim;
 |}.
 
 Definition ml_strategy : Node := {|
   node_id := "S-test";
   node_kind := Strategy;
-  node_claim := ml_security_claim;
   node_claim_text := "Argue via unit tests and fuzz testing";
   node_evidence := None;
+  node_claim := ml_security_claim;
 |}.
 
 Definition ml_context : Node := {|
   node_id := "C-scope";
   node_kind := Context;
-  node_claim := True;
   node_claim_text := "Scope: public-facing HTTP endpoints";
   node_evidence := None;
+  node_claim := True;
 |}.
 
 Definition ml_sol_unit : Node := {|
   node_id := "E-unit";
   node_kind := Solution;
-  node_claim := ml_unit_claim;
   node_claim_text := "Unit test suite passes (1 = 1)";
-  node_evidence := Some (ProofTerm ml_unit_claim eq_refl);
+  node_evidence := Some (ProofTerm "unit_tests_pass" ml_unit_claim eq_refl);
+  node_claim := ml_unit_claim;
 |}.
 
 Definition ml_sol_fuzz : Node := {|
   node_id := "E-fuzz";
   node_kind := Solution;
-  node_claim := ml_fuzz_claim;
   node_claim_text := "Fuzz testing passed (external certificate)";
-  node_evidence := Some (Certificate "PASS:fuzz:2026-03-18" (fun s => String.eqb s "PASS:fuzz:2026-03-18"));
+  node_evidence := Some (Certificate "PASS:fuzz:2026-03-18"
+                           (fun s => String.eqb s "PASS:fuzz:2026-03-18"));
+  node_claim := ml_fuzz_claim;
 |}.
 
 Definition ml_ac : AssuranceCase := {|
@@ -333,13 +341,25 @@ Lemma ml_entailment : forall id n,
      in fold_right and True child_claims -> n.(node_claim)).
 Proof. solve_entailment ml_find_node_equiv. Qed.
 
+Lemma ml_context_links : well_typed_context_links ml_ac.
+Proof.
+  intros l Hin Hkind. simpl in Hin.
+  destruct Hin as [<- | [<- | [<- | [<- | []]]]]; try discriminate.
+  (* The InContextOf link: G-sec (Goal) -> C-scope (Context) *)
+  exists ml_goal, ml_context.
+  split; [reflexivity |].
+  split; [reflexivity |].
+  split; [left; reflexivity | left; reflexivity].
+Qed.
+
 Definition ml_wf : WellFormed ml_ac :=
   {| wf_top := ml_top_is_goal;
      wf_acyclic := ml_acyclic;
      wf_discharged := ml_discharged;
      wf_no_dangle := ml_no_dangle;
      wf_unique_ids := ltac:(prove_nodup);
-     wf_entailment := ml_entailment |}.
+     wf_entailment := ml_entailment;
+     wf_context_links := ml_context_links |}.
 
 Theorem ml_supported : SupportTree ml_ac "G-sec".
 Proof. exact (assurance_case_supported ml_ac ml_wf). Qed.
@@ -373,17 +393,17 @@ Definition sb_claim : Prop := True.
 Definition sb_goal : Node := {|
   node_id := "G-safe";
   node_kind := Goal;
-  node_claim := sb_claim;
   node_claim_text := "System is free of buffer overflows";
   node_evidence := None;
+  node_claim := sb_claim;
 |}.
 
 Definition sb_solution : Node := {|
   node_id := "E-saw";
   node_kind := Solution;
-  node_claim := sb_claim;
   node_claim_text := "SAW verified: no buffer overflows";
   node_evidence := Some (signed_to_evidence saw_blob);
+  node_claim := sb_claim;
 |}.
 
 Definition sb_link : Link := {|
@@ -487,21 +507,206 @@ Lemma sb_entailment : forall id n,
      in fold_right and True child_claims -> n.(node_claim)).
 Proof. solve_entailment sb_find_node_equiv. Qed.
 
+Lemma sb_context_links : well_typed_context_links sb_ac.
+Proof.
+  intros l Hin Hkind. destruct Hin as [<- | []]. discriminate.
+Qed.
+
 Definition sb_wf : WellFormed sb_ac :=
   {| wf_top := sb_top_is_goal;
      wf_acyclic := sb_acyclic;
      wf_discharged := sb_discharged;
      wf_no_dangle := sb_no_dangle;
      wf_unique_ids := ltac:(prove_nodup);
-     wf_entailment := sb_entailment |}.
+     wf_entailment := sb_entailment;
+     wf_context_links := sb_context_links |}.
 
 Theorem sb_supported : SupportTree sb_ac "G-safe".
 Proof. exact (assurance_case_supported sb_ac sb_wf). Qed.
 
 Example sb_check : check_well_formed sb_ac = true := eq_refl.
 
-(* The signed blob also serializes cleanly: *)
-(* Eval vm_compute in signed_to_json saw_blob. *)
+(* ================================================================== *)
+(* Example 4: non-trivial mathematical claim                           *)
+(*                                                                      *)
+(* Requirement: "for all n, n + 0 = n and 0 + n = n"                   *)
+(* Strategy: split the conjunction and prove each half                  *)
+(* Evidence: Nat.add_0_r (requires induction) and eq_refl (computes)   *)
+(* ================================================================== *)
+
+Definition arith_claim : Prop :=
+  forall n : nat, n + 0 = n /\ 0 + n = n.
+
+Definition right_zero_claim : Prop := forall n : nat, n + 0 = n.
+Definition left_zero_claim  : Prop := forall n : nat, 0 + n = n.
+
+Definition right_zero_proof : right_zero_claim := Nat.add_0_r.
+Definition left_zero_proof  : left_zero_claim  := fun n => eq_refl.
+
+Definition ar_goal : Node := {|
+  node_id := "G-arith";
+  node_kind := Goal;
+  node_claim_text := "forall n, n+0=n /\ 0+n=n";
+  node_evidence := None;
+  node_claim := arith_claim;
+|}.
+
+Definition ar_strategy : Node := {|
+  node_id := "S-split";
+  node_kind := Strategy;
+  node_claim_text := "Split conjunction; prove each half";
+  node_evidence := None;
+  node_claim := arith_claim;
+|}.
+
+Definition ar_sol_right : Node := {|
+  node_id := "E-right";
+  node_kind := Solution;
+  node_claim_text := "forall n, n+0=n (by induction: Nat.add_0_r)";
+  node_evidence := Some (ProofTerm "Nat.add_0_r" right_zero_claim right_zero_proof);
+  node_claim := right_zero_claim;
+|}.
+
+Definition ar_sol_left : Node := {|
+  node_id := "E-left";
+  node_kind := Solution;
+  node_claim_text := "forall n, 0+n=n (by computation)";
+  node_evidence := Some (ProofTerm "eq_refl" left_zero_claim left_zero_proof);
+  node_claim := left_zero_claim;
+|}.
+
+Definition ar_ac : AssuranceCase := {|
+  ac_nodes := [ar_goal; ar_strategy; ar_sol_right; ar_sol_left];
+  ac_links := [{| link_kind := SupportedBy; link_from := "G-arith";
+                   link_to := "S-split" |};
+               {| link_kind := SupportedBy; link_from := "S-split";
+                   link_to := "E-right" |};
+               {| link_kind := SupportedBy; link_from := "S-split";
+                   link_to := "E-left" |}];
+  ac_top := "G-arith";
+|}.
+
+(* — Automated well-formedness via Reflect.v — *)
+
+(* Structural checks pass. *)
+Example ar_struct_check :
+  structural_checks ar_ac = true := eq_refl.
+
+(* Entailment: children's claims imply parent's claim.
+   For S-split: right_zero_claim /\ left_zero_claim /\ True -> arith_claim.
+   Requires first-order reasoning (split + intro + apply). *)
+Lemma ar_find_node_equiv : forall id,
+    find_node ar_ac id =
+    if String.eqb "G-arith" id then Some ar_goal
+    else if String.eqb "S-split" id then Some ar_strategy
+    else if String.eqb "E-right" id then Some ar_sol_right
+    else if String.eqb "E-left" id then Some ar_sol_left
+    else None.
+Proof.
+  intro id. unfold find_node, ar_ac.
+  cbn -[String.eqb]. destruct (String.eqb "G-arith" id); [reflexivity |].
+  cbn -[String.eqb]. destruct (String.eqb "S-split" id); [reflexivity |].
+  cbn -[String.eqb]. destruct (String.eqb "E-right" id); [reflexivity |].
+  cbn -[String.eqb]. destruct (String.eqb "E-left" id); reflexivity.
+Qed.
+
+Lemma ar_entailment : forall id n,
+    find_node ar_ac id = Some n ->
+    (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+    (let kids := supportedby_children ar_ac id in
+     let child_claims :=
+       flat_map (fun kid =>
+         match find_node ar_ac kid with
+         | Some cn => [cn.(node_claim)]
+         | None     => []
+         end) kids
+     in fold_right and True child_claims -> n.(node_claim)).
+Proof. solve_entailment ar_find_node_equiv. Qed.
+
+(* Evidence validity: trivial because ProofTerm types match node claims. *)
+Lemma ar_evidence_valid : forall n e,
+    In n ar_ac.(ac_nodes) ->
+    n.(node_kind) = Solution ->
+    n.(node_evidence) = Some e ->
+    evidence_valid n e.
+Proof.
+  intros n e Hin Hkind He. simpl in Hin.
+  destruct Hin as [<- | [<- | [<- | [<- | []]]]];
+    try discriminate;
+    injection He as <-; vm_compute; reflexivity.
+Qed.
+
+Definition ar_wf : WellFormed ar_ac :=
+  build_well_formed ar_ac
+    eq_refl
+    ar_entailment
+    ar_evidence_valid.
+
+Theorem ar_supported : SupportTree ar_ac "G-arith".
+Proof. exact (assurance_case_supported ar_ac ar_wf). Qed.
+
+Example ar_check : check_well_formed ar_ac = true := eq_refl.
+
+(* ================================================================== *)
+(* Example 5: compositional assembly                                   *)
+(*                                                                      *)
+(* Compose Example 1 (2+2=4) as a sub-case plugged into a parent.      *)
+(* ================================================================== *)
+
+Definition parent_claim : Prop := 2 + 2 = 4.
+
+Definition parent_goal : Node := {|
+  node_id := "G-parent";
+  node_kind := Goal;
+  node_claim_text := "Arithmetic subsystem is correct";
+  node_evidence := None;
+  node_claim := parent_claim;
+|}.
+
+Definition parent_ac : AssuranceCase := {|
+  ac_nodes := [parent_goal];
+  ac_links := [];
+  ac_top := "G-parent";
+|}.
+
+(* Compose: parent + ex_ac, bridging G-parent -> G1 (ex_ac's top) *)
+Definition composed_ac : AssuranceCase :=
+  compose_cases parent_ac ex_ac "G-parent".
+
+(* The composed case passes structural checks. *)
+Example composed_struct_check :
+  structural_checks composed_ac = true := eq_refl.
+
+Example composed_check :
+  check_well_formed composed_ac = true := eq_refl.
+
+(* ================================================================== *)
+(* Renderer sanity checks                                              *)
+(* ================================================================== *)
+
+(* Both renderers produce non-empty output. *)
+Example ex_compact_nonempty :
+  render_assurance_case ex_ac <> EmptyString.
+Proof. vm_compute. discriminate. Qed.
+
+Example ex_pretty_nonempty :
+  render_assurance_case_pretty ex_ac <> EmptyString.
+Proof. vm_compute. discriminate. Qed.
+
+Example ex_dot_nonempty :
+  render_dot ex_ac <> EmptyString.
+Proof. vm_compute. discriminate. Qed.
+
+(* Both renderers work from the same JSON AST. *)
+Lemma renderers_same_ast : forall ac,
+    render_assurance_case ac =
+    render_json (assurance_case_to_json ac).
+Proof. reflexivity. Qed.
+
+Lemma renderers_pretty_same_ast : forall ac,
+    render_assurance_case_pretty ac =
+    render_json_pretty (assurance_case_to_json ac).
+Proof. reflexivity. Qed.
 
 (* ================================================================== *)
 (* Extraction                                                           *)
@@ -510,8 +715,12 @@ Example sb_check : check_well_formed sb_ac = true := eq_refl.
 Require Extraction.
 Extraction Language OCaml.
 Extract Inlined Constant Nat.eqb => "(=)".
+
+(* Ensure node_claim_text survives extraction by placing Prop last
+   in the Node record. The label argument of ProofTerm also survives. *)
 Extraction "rack" render_assurance_case render_assurance_case_pretty
                    render_dot
                    assurance_case_to_json render_json render_json_pretty
                    signed_to_evidence signed_to_json
-                   check_well_formed.
+                   check_well_formed structural_checks
+                   compose_cases.
