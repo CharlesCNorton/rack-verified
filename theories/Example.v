@@ -12,6 +12,7 @@ Require Import Stdlib.Lists.List.
 Require Import Stdlib.Arith.PeanoNat.
 Import ListNotations.
 Open Scope string_scope.
+Open Scope list_scope.
 
 Arguments supportedby_children : simpl never.
 
@@ -27,7 +28,7 @@ Definition ex_goal : Node := {|
   node_kind := Goal;
   node_claim_text := "2 + 2 = 4";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := ex_claim;
 |}.
 
@@ -36,7 +37,7 @@ Definition ex_solution : Node := {|
   node_kind := Solution;
   node_claim_text := "2 + 2 = 4";
   node_evidence := Some (ProofTerm "ex_claim" ex_claim ex_proof None);
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := ex_claim;
 |}.
 
@@ -53,7 +54,21 @@ Definition ex_ac : AssuranceCase := {|
 |}.
 
 Definition ex_wf : WellFormed ex_ac.
-Proof. prove_well_formed_auto. Qed.
+Proof.
+  apply build_well_formed; [vm_compute; reflexivity | |
+    intros n e Hin Hkind He; simpl in Hin;
+    repeat (destruct Hin as [<- | Hin]; [try discriminate; injection He as <-; vm_compute; reflexivity |]);
+    destruct Hin as []].
+  intros ? ? Hf Hk; vm_compute in Hf;
+  repeat match type of Hf with
+  | (if ?c then _ else _) = _ =>
+      destruct c;
+      [ injection Hf; intro; subst;
+        first [ vm_compute; tauto | vm_compute; intuition
+              | exfalso; destruct Hk; discriminate ]
+      | ]
+  end; try discriminate.
+Qed.
 
 Theorem ex_supported : SupportTree ex_ac "G1".
 Proof. exact (assurance_case_supported ex_ac ex_wf). Qed.
@@ -74,7 +89,7 @@ Definition ml_goal : Node := {|
   node_kind := Goal;
   node_claim_text := "System meets security requirements";
   node_evidence := None;
-  node_metadata := [("weight", "critical")];
+  node_metadata := [("weight", MVString "critical")];
   node_claim := ml_security_claim;
 |}.
 
@@ -83,7 +98,7 @@ Definition ml_strategy : Node := {|
   node_kind := Strategy;
   node_claim_text := "Argue via unit tests and fuzz testing";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := ml_security_claim;
 |}.
 
@@ -92,7 +107,7 @@ Definition ml_context : Node := {|
   node_kind := Context;
   node_claim_text := "Scope: public-facing HTTP endpoints";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := True;
 |}.
 
@@ -101,7 +116,7 @@ Definition ml_sol_unit : Node := {|
   node_kind := Solution;
   node_claim_text := "Unit test suite passes (1 = 1)";
   node_evidence := Some (ProofTerm "unit_tests_pass" ml_unit_claim eq_refl None);
-  node_metadata := [("timestamp", "2026-03-18T10:00:00Z")];
+  node_metadata := [("timestamp", MVTimestamp "2026-03-18T10:00:00Z")];
   node_claim := ml_unit_claim;
 |}.
 
@@ -111,8 +126,8 @@ Definition ml_sol_fuzz : Node := {|
   node_claim_text := "Fuzz testing passed (external certificate)";
   node_evidence := Some (Certificate "PASS:fuzz:2026-03-18" "fuzz-tool"
                            (fun s => String.eqb s "PASS:fuzz:2026-03-18"));
-  node_metadata := [("timestamp", "2026-03-18T11:00:00Z");
-                     ("tool", "fuzz-tool")];
+  node_metadata := [("timestamp", MVTimestamp "2026-03-18T11:00:00Z");
+                     ("tool", MVString "fuzz-tool")];
   node_claim := ml_fuzz_claim;
 |}.
 
@@ -126,7 +141,21 @@ Definition ml_ac : AssuranceCase := {|
 |}.
 
 Definition ml_wf : WellFormed ml_ac.
-Proof. prove_well_formed_auto. Qed.
+Proof.
+  apply build_well_formed; [vm_compute; reflexivity | |
+    intros n e Hin Hkind He; simpl in Hin;
+    repeat (destruct Hin as [<- | Hin]; [try discriminate; injection He as <-; vm_compute; reflexivity |]);
+    destruct Hin as []].
+  intros ? ? Hf Hk; vm_compute in Hf;
+  repeat match type of Hf with
+  | (if ?c then _ else _) = _ =>
+      destruct c;
+      [ injection Hf; intro; subst;
+        first [ vm_compute; tauto | vm_compute; intuition
+              | exfalso; destruct Hk; discriminate ]
+      | ]
+  end; try discriminate.
+Qed.
 
 Theorem ml_supported : SupportTree ml_ac "G-sec".
 Proof. exact (assurance_case_supported ml_ac ml_wf). Qed.
@@ -161,7 +190,7 @@ Definition sb_goal : Node := {|
   node_kind := Goal;
   node_claim_text := "System is free of buffer overflows";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := sb_claim;
 |}.
 
@@ -170,7 +199,7 @@ Definition sb_solution : Node := {|
   node_kind := Solution;
   node_claim_text := "SAW verified: no buffer overflows";
   node_evidence := Some (signed_to_evidence saw_blob);
-  node_metadata := [("tool", "SAW"); ("timestamp", "2026-03-18T12:00:00Z")];
+  node_metadata := [("tool", MVString "SAW"); ("timestamp", MVTimestamp "2026-03-18T12:00:00Z")];
   node_claim := sb_claim;
 |}.
 
@@ -190,7 +219,21 @@ Lemma sb_evidence_valid : evidence_valid sb_solution (signed_to_evidence saw_blo
 Proof. exact (signed_evidence_valid saw_blob sb_solution saw_blob_valid). Qed.
 
 Definition sb_wf : WellFormed sb_ac.
-Proof. prove_well_formed_auto. Qed.
+Proof.
+  apply build_well_formed; [vm_compute; reflexivity | |
+    intros n e Hin Hkind He; simpl in Hin;
+    repeat (destruct Hin as [<- | Hin]; [try discriminate; injection He as <-; vm_compute; reflexivity |]);
+    destruct Hin as []].
+  intros ? ? Hf Hk; vm_compute in Hf;
+  repeat match type of Hf with
+  | (if ?c then _ else _) = _ =>
+      destruct c;
+      [ injection Hf; intro; subst;
+        first [ vm_compute; tauto | vm_compute; intuition
+              | exfalso; destruct Hk; discriminate ]
+      | ]
+  end; try discriminate.
+Qed.
 
 Theorem sb_supported : SupportTree sb_ac "G-safe".
 Proof. exact (assurance_case_supported sb_ac sb_wf). Qed.
@@ -216,7 +259,7 @@ Definition ar_goal : Node := {|
   node_kind := Goal;
   node_claim_text := "forall n, n+0=n /\ 0+n=n";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := arith_claim;
 |}.
 
@@ -225,7 +268,7 @@ Definition ar_strategy : Node := {|
   node_kind := Strategy;
   node_claim_text := "Split conjunction; prove each half";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := arith_claim;
 |}.
 
@@ -234,7 +277,7 @@ Definition ar_sol_right : Node := {|
   node_kind := Solution;
   node_claim_text := "forall n, n+0=n (by induction: Nat.add_0_r)";
   node_evidence := Some (ProofTerm "Nat.add_0_r" right_zero_claim right_zero_proof None);
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := right_zero_claim;
 |}.
 
@@ -243,7 +286,7 @@ Definition ar_sol_left : Node := {|
   node_kind := Solution;
   node_claim_text := "forall n, 0+n=n (by computation)";
   node_evidence := Some (ProofTerm "eq_refl" left_zero_claim left_zero_proof None);
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := left_zero_claim;
 |}.
 
@@ -287,7 +330,17 @@ Lemma ar_entailment : forall id n,
          | None     => []
          end) kids
      in fold_right and True child_claims -> n.(node_claim)).
-Proof. solve_entailment ar_find_node_equiv. Qed.
+Proof.
+  intros id n Hfind Hkind; rewrite ar_find_node_equiv in Hfind;
+  repeat match type of Hfind with
+  | (if ?c then _ else _) = _ =>
+      destruct c;
+      [ injection Hfind; intro; subst;
+        first [ vm_compute; tauto | vm_compute; intuition
+              | exfalso; destruct Hkind; discriminate ]
+      | ]
+  end; try discriminate.
+Qed.
 
 Lemma ar_evidence_valid : forall n e,
     In n ar_ac.(ac_nodes) ->
@@ -323,7 +376,7 @@ Definition parent_goal : Node := {|
   node_kind := Goal;
   node_claim_text := "Arithmetic subsystem is correct";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := parent_claim;
 |}.
 
@@ -365,7 +418,7 @@ Definition mt_goal : Node := {|
   node_kind := Goal;
   node_claim_text := "Parser is safe against malformed input";
   node_evidence := None;
-  node_metadata := [("confidence", "0.99"); ("weight", "critical")];
+  node_metadata := [("confidence", MVString "0.99"); ("weight", MVString "critical")];
   node_claim := mt_safety_claim;
 |}.
 
@@ -374,7 +427,7 @@ Definition mt_strategy : Node := {|
   node_kind := Strategy;
   node_claim_text := "Combine static analysis, fuzzing, and CI";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := mt_safety_claim;
 |}.
 
@@ -383,7 +436,7 @@ Definition mt_assumption : Node := {|
   node_kind := Assumption;
   node_claim_text := "Compiler is trusted (not verified)";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := True;
 |}.
 
@@ -397,8 +450,8 @@ Definition mt_sol_cbmc : Node := {|
   node_claim_text := "CBMC: all assertions hold";
   node_evidence := Some (Certificate
     "CBMC:all_assertions_hold:v5.95:2026-03-18" "CBMC" cbmc_verify);
-  node_metadata := [("tool", "CBMC"); ("version", "5.95");
-                     ("timestamp", "2026-03-18T08:00:00Z")];
+  node_metadata := [("tool", MVString "CBMC"); ("version", MVString "5.95");
+                     ("timestamp", MVTimestamp "2026-03-18T08:00:00Z")];
   node_claim := mt_cbmc_claim;
 |}.
 
@@ -408,8 +461,8 @@ Definition mt_sol_fuzz : Node := {|
   node_claim_text := "AFL++: 0 crashes in 10M inputs";
   node_evidence := Some (Certificate
     "AFL++:0_crashes:10M_inputs:2026-03-18" "AFL++" fuzz_verify);
-  node_metadata := [("tool", "AFL++"); ("timestamp", "2026-03-18T09:00:00Z");
-                     ("valid_until", "2026-04-18")];
+  node_metadata := [("tool", MVString "AFL++"); ("timestamp", MVTimestamp "2026-03-18T09:00:00Z");
+                     ("valid_until", MVTimestamp "2026-04-18")];
   node_claim := mt_fuzz_claim;
 |}.
 
@@ -419,8 +472,8 @@ Definition mt_sol_ci : Node := {|
   node_claim_text := "GitHub Actions: all checks green";
   node_evidence := Some (Certificate
     "GHA:run_12345:all_green:2026-03-18" "GHA" ci_verify);
-  node_metadata := [("tool", "GHA"); ("run", "12345");
-                     ("timestamp", "2026-03-18T10:30:00Z")];
+  node_metadata := [("tool", MVString "GHA"); ("run", MVString "12345");
+                     ("timestamp", MVTimestamp "2026-03-18T10:30:00Z")];
   node_claim := mt_ci_claim;
 |}.
 
@@ -436,7 +489,21 @@ Definition mt_ac : AssuranceCase := {|
 |}.
 
 Definition mt_wf : WellFormed mt_ac.
-Proof. prove_well_formed_auto. Qed.
+Proof.
+  apply build_well_formed; [vm_compute; reflexivity | |
+    intros n e Hin Hkind He; simpl in Hin;
+    repeat (destruct Hin as [<- | Hin]; [try discriminate; injection He as <-; vm_compute; reflexivity |]);
+    destruct Hin as []].
+  intros ? ? Hf Hk; vm_compute in Hf;
+  repeat match type of Hf with
+  | (if ?c then _ else _) = _ =>
+      destruct c;
+      [ injection Hf; intro; subst;
+        first [ vm_compute; tauto | vm_compute; intuition
+              | exfalso; destruct Hk; discriminate ]
+      | ]
+  end; try discriminate.
+Qed.
 
 Theorem mt_supported : SupportTree mt_ac "G-mt".
 Proof. exact (assurance_case_supported mt_ac mt_wf). Qed.
@@ -470,7 +537,7 @@ Definition rt_goal : Node := {|
   node_kind := Goal;
   node_claim_text := "3 + 3 = 6";
   node_evidence := None;
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := rt_claim;
 |}.
 
@@ -479,7 +546,7 @@ Definition rt_solution : Node := {|
   node_kind := Solution;
   node_claim_text := "3 + 3 = 6 (proof + runtime check)";
   node_evidence := Some (ProofTerm "rt_claim" rt_claim rt_proof (Some rt_check));
-  node_metadata := [];
+  node_metadata := nil;
   node_claim := rt_claim;
 |}.
 
@@ -490,7 +557,21 @@ Definition rt_ac : AssuranceCase := {|
 |}.
 
 Definition rt_wf : WellFormed rt_ac.
-Proof. prove_well_formed_auto. Qed.
+Proof.
+  apply build_well_formed; [vm_compute; reflexivity | |
+    intros n e Hin Hkind He; simpl in Hin;
+    repeat (destruct Hin as [<- | Hin]; [try discriminate; injection He as <-; vm_compute; reflexivity |]);
+    destruct Hin as []].
+  intros ? ? Hf Hk; vm_compute in Hf;
+  repeat match type of Hf with
+  | (if ?c then _ else _) = _ =>
+      destruct c;
+      [ injection Hf; intro; subst;
+        first [ vm_compute; tauto | vm_compute; intuition
+              | exfalso; destruct Hk; discriminate ]
+      | ]
+  end; try discriminate.
+Qed.
 
 (* Runtime check works after extraction *)
 Example rt_runtime_check :
@@ -558,7 +639,7 @@ Proof. vm_compute. reflexivity. Qed.
 Definition bad_dangling_ac : AssuranceCase := {|
   ac_nodes := [{| node_id := "G"; node_kind := Goal;
                    node_claim_text := "G"; node_evidence := None;
-                   node_metadata := []; node_claim := True |}];
+                   node_metadata := nil; node_claim := True |}];
   ac_links := [{| link_kind := SupportedBy;
                    link_from := "G"; link_to := "MISSING" |}];
   ac_top := "G";
@@ -569,10 +650,10 @@ Example bad_dangling_s : structural_checks bad_dangling_ac = false := eq_refl.
 Definition bad_cycle_ac : AssuranceCase := {|
   ac_nodes := [{| node_id := "A"; node_kind := Goal;
                    node_claim_text := "A"; node_evidence := None;
-                   node_metadata := []; node_claim := True |};
+                   node_metadata := nil; node_claim := True |};
                {| node_id := "B"; node_kind := Strategy;
                    node_claim_text := "B"; node_evidence := None;
-                   node_metadata := []; node_claim := True |}];
+                   node_metadata := nil; node_claim := True |}];
   ac_links := [{| link_kind := SupportedBy;
                    link_from := "A"; link_to := "B" |};
                {| link_kind := SupportedBy;
@@ -585,10 +666,10 @@ Example bad_cycle_s : structural_checks bad_cycle_ac = false := eq_refl.
 Definition bad_no_evidence_ac : AssuranceCase := {|
   ac_nodes := [{| node_id := "G"; node_kind := Goal;
                    node_claim_text := "G"; node_evidence := None;
-                   node_metadata := []; node_claim := True |};
+                   node_metadata := nil; node_claim := True |};
                {| node_id := "E"; node_kind := Solution;
                    node_claim_text := "E"; node_evidence := None;
-                   node_metadata := []; node_claim := True |}];
+                   node_metadata := nil; node_claim := True |}];
   ac_links := [{| link_kind := SupportedBy;
                    link_from := "G"; link_to := "E" |}];
   ac_top := "G";
@@ -599,11 +680,11 @@ Example bad_no_evidence_s : structural_checks bad_no_evidence_ac = false := eq_r
 Definition bad_dup_ids_ac : AssuranceCase := {|
   ac_nodes := [{| node_id := "X"; node_kind := Goal;
                    node_claim_text := "X1"; node_evidence := None;
-                   node_metadata := []; node_claim := True |};
+                   node_metadata := nil; node_claim := True |};
                {| node_id := "X"; node_kind := Solution;
                    node_claim_text := "X2";
                    node_evidence := Some (ProofTerm "t" True I None);
-                   node_metadata := []; node_claim := True |}];
+                   node_metadata := nil; node_claim := True |}];
   ac_links := [{| link_kind := SupportedBy;
                    link_from := "X"; link_to := "X" |}];
   ac_top := "X";
@@ -614,14 +695,14 @@ Example bad_dup_ids_s : structural_checks bad_dup_ids_ac = false := eq_refl.
 Definition bad_ctx_dir_ac : AssuranceCase := {|
   ac_nodes := [{| node_id := "G"; node_kind := Goal;
                    node_claim_text := "G"; node_evidence := None;
-                   node_metadata := []; node_claim := True |};
+                   node_metadata := nil; node_claim := True |};
                {| node_id := "E"; node_kind := Solution;
                    node_claim_text := "E";
                    node_evidence := Some (ProofTerm "t" True I None);
-                   node_metadata := []; node_claim := True |};
+                   node_metadata := nil; node_claim := True |};
                {| node_id := "C"; node_kind := Context;
                    node_claim_text := "C"; node_evidence := None;
-                   node_metadata := []; node_claim := True |}];
+                   node_metadata := nil; node_claim := True |}];
   ac_links := [{| link_kind := SupportedBy;
                    link_from := "G"; link_to := "E" |};
                {| link_kind := InContextOf;
@@ -634,7 +715,7 @@ Example bad_ctx_dir_s : structural_checks bad_ctx_dir_ac = false := eq_refl.
 Definition bad_top_ac : AssuranceCase := {|
   ac_nodes := [{| node_id := "S"; node_kind := Strategy;
                    node_claim_text := "S"; node_evidence := None;
-                   node_metadata := []; node_claim := True |}];
+                   node_metadata := nil; node_claim := True |}];
   ac_links := [];
   ac_top := "S";
 |}.
@@ -643,11 +724,14 @@ Example bad_top_s : structural_checks bad_top_ac = false := eq_refl.
 
 (* Diagnostic checker reports errors for negative cases *)
 Example bad_dangling_diag :
-  length (diagnose_all bad_dangling_ac) > 0 := eq_refl.
+  length (diagnose_all bad_dangling_ac) > 0.
+Proof. vm_compute. apply Nat.lt_0_succ. Qed.
 Example bad_cycle_diag :
-  length (diagnose_all bad_cycle_ac) > 0 := eq_refl.
+  length (diagnose_all bad_cycle_ac) > 0.
+Proof. vm_compute. apply Nat.lt_0_succ. Qed.
 Example bad_no_evidence_diag :
-  length (diagnose_all bad_no_evidence_ac) > 0 := eq_refl.
+  length (diagnose_all bad_no_evidence_ac) > 0.
+Proof. vm_compute. apply Nat.lt_0_succ. Qed.
 
 (* ================================================================== *)
 (* Checker equivalence                                                 *)
@@ -727,13 +811,16 @@ Proof. vm_compute. reflexivity. Qed.
 (* ================================================================== *)
 
 Example mt_goal_confidence :
-  node_confidence mt_goal = Some "0.99" := eq_refl.
+  node_confidence mt_goal = Some "0.99".
+Proof. vm_compute. reflexivity. Qed.
 
 Example mt_goal_weight :
-  node_weight mt_goal = Some "critical" := eq_refl.
+  node_weight mt_goal = Some "critical".
+Proof. vm_compute. reflexivity. Qed.
 
 Example mt_sol_cbmc_timestamp :
-  node_timestamp mt_sol_cbmc = Some "2026-03-18T08:00:00Z" := eq_refl.
+  node_timestamp mt_sol_cbmc = Some "2026-03-18T08:00:00Z".
+Proof. vm_compute. reflexivity. Qed.
 
 (* ================================================================== *)
 (* Incremental checker                                                 *)
@@ -771,13 +858,19 @@ Extraction "rack" render_assurance_case render_assurance_case_pretty
                    check_support_tree compute_support_witness
                    parse_json json_to_assurance_case
                    hydrate_evidence auto_hydrate json_field
-                   diagnose_all diagnose_node check_error_to_json
-                   diagnose_to_json
+                   diagnose_all diagnose_structural diagnose_node
+                   check_error_to_json diagnose_to_json
+                   diagnose_metadata_expiry diagnose_required_keys
+                   diagnose_malformed_timestamps
                    check_node check_link
+                   check_identity_entailment check_id_disjoint
+                   NodeKind_eqb LinkKind_eqb
+                   mv_as_string metadata_value_to_json
                    fold_assurance_case fold_nodes_indexed
                    stream_dot_lines stream_json_lines
                    find_metadata node_timestamp node_confidence
                    node_weight
                    registry_lookup make_certificate
                    render_json_ext json_to_ext ext_to_json
-                   metadata_to_json xml_escape.
+                   metadata_to_json xml_escape
+                   is_ascii_string string_ltb check_date_format.

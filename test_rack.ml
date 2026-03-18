@@ -227,12 +227,12 @@ let () =
     node_claim_text = coq_string_of_string "test";
     node_evidence = None;
     node_metadata = Cons (Pair (coq_string_of_string "key",
-                                coq_string_of_string "val"), Nil);
+                                MVString (coq_string_of_string "val")), Nil);
   } in
   (match find_metadata (coq_string_of_string "key") md_node.node_metadata with
-   | Some v -> assert_true "find_metadata"
+   | Some (MVString v) -> assert_true "find_metadata"
      (string_of_coq_string v = "val")
-   | None -> assert_true "find_metadata" false);
+   | _ -> assert_true "find_metadata" false);
 
   (* negative: bad case *)
   Printf.printf "\n[negative cases]\n";

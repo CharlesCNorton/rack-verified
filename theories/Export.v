@@ -9,6 +9,7 @@ Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Arith.PeanoNat.
 Import ListNotations.
+Open Scope list_scope.
 Open Scope string_scope.
 
 (* ------------------------------------------------------------------ *)
@@ -94,11 +95,16 @@ Fixpoint escape_json_chars (s : string) : string :=
 (* Minimal JSON AST                                                     *)
 (* ------------------------------------------------------------------ *)
 
+(** * JSON AST
+    Includes [JNeg] for negative integers and [JFloat] for
+    floating-point literals (preserved as strings). *)
 Inductive Json : Type :=
   | JNull   : Json
   | JBool   : bool -> Json
   | JStr    : string -> Json
   | JNum    : nat -> Json
+  | JNeg    : nat -> Json      (** [JNeg n] represents [-(S n)] *)
+  | JFloat  : string -> Json   (** preserved verbatim as string *)
   | JArr    : list Json -> Json
   | JObj    : list (string * Json) -> Json.
 
@@ -127,8 +133,16 @@ Definition evidence_to_json (e : Evidence) : Json :=
             ("tool", JStr tool)]
   end.
 
-Definition metadata_to_json (md : list (string * string)) : Json :=
-  JObj (map (fun kv => (fst kv, JStr (snd kv))) md).
+Definition metadata_value_to_json (v : MetadataValue) : Json :=
+  match v with
+  | MVString s    => JStr s
+  | MVNat n       => JNum n
+  | MVBool b      => JBool b
+  | MVTimestamp s => JStr s
+  end.
+
+Definition metadata_to_json (md : list (string * MetadataValue)) : Json :=
+  JObj (map (fun kv => (fst kv, metadata_value_to_json (snd kv))) md).
 
 Definition node_to_json (n : Node) : Json :=
   JObj [("id", JStr n.(node_id));
@@ -222,6 +236,8 @@ Fixpoint render_json (j : Json) : string :=
   | JBool false => "false"
   | JStr s => json_quote s
   | JNum n => nat_to_string n
+  | JNeg n => String.append "-" (nat_to_string (S n))
+  | JFloat s => s
   | JArr elems =>
       String.append "[" (String.append (join_strings "," (render_list elems)) "]")
   | JObj kvs =>
@@ -268,6 +284,8 @@ Fixpoint render_json_pretty_go (depth : nat) (j : Json) : string :=
   | JBool false => "false"
   | JStr s => json_quote s
   | JNum n => nat_to_string n
+  | JNeg n => String.append "-" (nat_to_string (S n))
+  | JFloat s => s
   | JArr elems =>
     let items := render_list_pretty elems in
     match items with
@@ -365,7 +383,7 @@ Definition render_dot_node_opts (opts : DotOptions) (n : Node) : string :=
   let md_label :=
     if opts.(dot_show_metadata) then
       concat_strings (map (fun kv =>
-        "\n" ++ fst kv ++ "=" ++ snd kv) n.(node_metadata))
+        "\n" ++ fst kv ++ "=" ++ mv_as_string (snd kv)) n.(node_metadata))
     else "" in
   let label := base_label ++ ev_label ++ md_label in
   "  " ++ json_quote n.(node_id) ++ " [label=" ++ json_quote label
@@ -602,8 +620,40 @@ Fixpoint expect_literal (lit s : string) : option string :=
     end
   end.
 
-(* Main recursive-descent parser.  All three mutually recursive
-   functions decrease on the fuel parameter.                           *)
+(* Collect digit and dot characters for float literals.               *)
+Fixpoint collect_float_chars (fuel : nat) (s : string)
+    (acc : string) : string * string :=
+  match fuel with
+  | 0 => (string_rev acc, s)
+  | S f =>
+    match s with
+    | EmptyString => (string_rev acc, s)
+    | String c rest =>
+      if is_digit_char c || is_char_code c 46   (* '.' = 46 *)
+                          || is_char_code c 101  (* 'e' = 101 *)
+                          || is_char_code c 69   (* 'E' = 69 *)
+                          || is_char_code c 43   (* '+' = 43 *)
+                          || is_char_code c 45   (* '-' = 45 *)
+      then collect_float_chars f rest (String c acc)
+      else (string_rev acc, s)
+    end
+  end.
+
+(* Check whether a digit-string remainder contains a dot or exponent,
+   indicating a float literal.                                         *)
+Fixpoint has_dot_or_exp (s : string) : bool :=
+  match s with
+  | EmptyString => false
+  | String c rest =>
+    if is_char_code c 46 || is_char_code c 101 || is_char_code c 69
+    then true
+    else if is_digit_char c then has_dot_or_exp rest
+    else false
+  end.
+
+(* Main recursive-descent parser.  Handles negative numbers natively
+   (producing JNeg) and floating-point literals (producing JFloat).
+   All three mutually recursive functions decrease on fuel.            *)
 Fixpoint parse_json_go (fuel : nat) (s : string)
   : option (Json * string) :=
   match fuel with
@@ -638,9 +688,31 @@ Fixpoint parse_json_go (fuel : nat) (s : string)
           else
             parse_array_elems f rest' nil
         end
+      else if is_char_code c 45 then (* '-' = 45: negative number *)
+        match rest with
+        | EmptyString => None
+        | String d drest =>
+          if is_digit_char d then
+            if has_dot_or_exp drest then
+              let '(fstr, rest') :=
+                collect_float_chars f drest (String d EmptyString) in
+              Some (JFloat (String.append "-" fstr), rest')
+            else
+              let '(n, rest') := parse_nat_chars f drest (digit_value_of d) in
+              match n with
+              | 0 => Some (JNum 0, rest')   (* -0 = 0 *)
+              | S m => Some (JNeg m, rest')
+              end
+          else None
+        end
       else if is_digit_char c then
-        let '(n, rest') := parse_nat_chars f rest (digit_value_of c) in
-        Some (JNum n, rest')
+        if has_dot_or_exp rest then
+          let '(fstr, rest') :=
+            collect_float_chars f rest (String c EmptyString) in
+          Some (JFloat fstr, rest')
+        else
+          let '(n, rest') := parse_nat_chars f rest (digit_value_of c) in
+          Some (JNum n, rest')
       else if is_char_code c 116 then
         match expect_literal "rue" rest with
         | Some rest' => Some (JBool true, rest')
@@ -722,11 +794,24 @@ with parse_object_kvs (fuel : nat) (s : string)
     end
   end.
 
-Definition parse_json (s : string) : option Json :=
-  match parse_json_go (string_length s) s with
-  | Some (j, _) => Some j
-  | None => None
+(** Check that a string contains only 7-bit ASCII characters.
+    Returns [false] if any byte has the high bit set, which would
+    indicate multi-byte UTF-8 that Rocq strings cannot represent. *)
+Fixpoint is_ascii_string (s : string) : bool :=
+  match s with
+  | EmptyString => true
+  | String c rest =>
+    let n := nat_of_ascii_local c in
+    Nat.ltb n 128 && is_ascii_string rest
   end.
+
+Definition parse_json (s : string) : option Json :=
+  if negb (is_ascii_string s) then None
+  else
+    match parse_json_go (string_length s) s with
+    | Some (j, _) => Some j
+    | None => None
+    end.
 
 (* ------------------------------------------------------------------ *)
 (* JSON to AssuranceCase importer                                       *)
@@ -782,8 +867,10 @@ Definition json_to_node (j : Json) : option Node :=
                   | Some (JObj mkvs) =>
                     flat_map (fun kv =>
                       match snd kv with
-                      | JStr v => [(fst kv, v)]
-                      | _ => []
+                      | JStr v  => [(fst kv, MVString v)]
+                      | JNum n  => [(fst kv, MVNat n)]
+                      | JBool b => [(fst kv, MVBool b)]
+                      | _       => []
                       end) mkvs
                   | _ => []
                   end in
@@ -903,7 +990,7 @@ Fixpoint auto_hydrate_list (nodes : list Node)
       | Solution, None =>
         match find_metadata "tool" n.(node_metadata),
               find_metadata "blob" n.(node_metadata) with
-        | Some tool, Some blob =>
+        | Some (MVString tool), Some (MVString blob) =>
           match registry_lookup tool reg with
           | Some v =>
             {| node_id := n.(node_id);
@@ -1040,7 +1127,7 @@ Definition stream_json_lines (ac : AssuranceCase) : list string :=
    tools that support the SACM 2.2 interchange format.                 *)
 
 Definition xml_escape (s : string) : string :=
-  (* Escape &, <, >, " for XML attribute values.
+  (* Escape ampersand, angle brackets, double-quote for XML.
      Reuse the JSON escaper for quotes; add XML-specific escapes. *)
   let fix go (s : string) : string :=
     match s with
@@ -1125,6 +1212,8 @@ Fixpoint json_to_ext (j : Json) : JsonExt :=
   | JBool b  => JXBool b
   | JStr s   => JXStr s
   | JNum n   => JXNum n
+  | JNeg n   => JXNeg n
+  | JFloat s => JXFloat s
   | JArr js  => JXArr (map json_to_ext js)
   | JObj kvs => JXObj (map (fun kv => (fst kv, json_to_ext (snd kv))) kvs)
   end.
@@ -1136,8 +1225,8 @@ Fixpoint ext_to_json (j : JsonExt) : Json :=
   | JXBool b  => JBool b
   | JXStr s   => JStr s
   | JXNum n   => JNum n
-  | JXNeg _   => JNum 0  (* lossy: best effort *)
-  | JXFloat s => JStr s  (* preserve as string *)
+  | JXNeg n   => JNeg n
+  | JXFloat s => JFloat s
   | JXArr js  => JArr (map ext_to_json js)
   | JXObj kvs => JObj (map (fun kv => (fst kv, ext_to_json (snd kv))) kvs)
   end.
@@ -1199,6 +1288,15 @@ Definition check_error_to_json (err : CheckError) : Json :=
       JObj [("error", JStr "BadContextTarget"); ("from", JStr f); ("to", JStr t)]
   | ErrCycle id =>
       JObj [("error", JStr "Cycle"); ("node", JStr id)]
+  | ErrExpiredEvidence id expiry =>
+      JObj [("error", JStr "ExpiredEvidence"); ("node", JStr id);
+            ("valid_until", JStr expiry)]
+  | ErrMissingRequiredKey id key =>
+      JObj [("error", JStr "MissingRequiredKey"); ("node", JStr id);
+            ("key", JStr key)]
+  | ErrMalformedTimestamp id val =>
+      JObj [("error", JStr "MalformedTimestamp"); ("node", JStr id);
+            ("value", JStr val)]
   end.
 
 Definition diagnose_to_json (ac : AssuranceCase) : Json :=

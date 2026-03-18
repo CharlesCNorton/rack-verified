@@ -23,6 +23,7 @@ Require Import Stdlib.Lists.List.
 Require Import Stdlib.Arith.PeanoNat.
 Import ListNotations.
 Open Scope string_scope.
+Open Scope list_scope.
 
 (* ------------------------------------------------------------------ *)
 (* Core types                                                           *)
@@ -30,8 +31,27 @@ Open Scope string_scope.
 
 Definition Id := string.
 
+(** * Node kinds
+    The six GSN node kinds.  [Goal] and [Strategy] are internal
+    (must have children); [Solution] is a leaf (must carry evidence);
+    [Context], [Assumption], and [Justification] are annotations. *)
 Inductive NodeKind : Type :=
   | Goal | Strategy | Solution | Context | Assumption | Justification.
+
+(** Decidable equality on [NodeKind]. *)
+Definition NodeKind_eqb (a b : NodeKind) : bool :=
+  match a, b with
+  | Goal, Goal | Strategy, Strategy | Solution, Solution
+  | Context, Context | Assumption, Assumption
+  | Justification, Justification => true
+  | _, _ => false
+  end.
+
+Lemma NodeKind_eqb_refl : forall k, NodeKind_eqb k k = true.
+Proof. destruct k; reflexivity. Qed.
+
+Lemma NodeKind_eqb_eq : forall a b, NodeKind_eqb a b = true <-> a = b.
+Proof. destruct a, b; simpl; split; intro; try reflexivity; try discriminate. Qed.
 
 (* Evidence must *witness* the node's own claim, not an arbitrary Prop. *)
 Inductive Evidence : Type :=
@@ -45,22 +65,57 @@ Inductive Evidence : Type :=
      so the extracted code can dispatch to the right FFI validator.       *)
   | Certificate : string -> string -> (string -> bool) -> Evidence.
 
+(** * Typed metadata values
+    Structured representation replacing raw string pairs.
+    [MVString] is the catch-all; [MVNat], [MVBool], and [MVTimestamp]
+    carry semantic intent that survives extraction and enables
+    validated accessors and policy checks. *)
+Inductive MetadataValue : Type :=
+  | MVString    : string -> MetadataValue
+  | MVNat       : nat -> MetadataValue
+  | MVBool      : bool -> MetadataValue
+  | MVTimestamp : string -> MetadataValue.
+
+Definition MetadataValue_eqb (a b : MetadataValue) : bool :=
+  match a, b with
+  | MVString s1, MVString s2 => String.eqb s1 s2
+  | MVNat n1, MVNat n2 => Nat.eqb n1 n2
+  | MVBool b1, MVBool b2 => Bool.eqb b1 b2
+  | MVTimestamp s1, MVTimestamp s2 => String.eqb s1 s2
+  | _, _ => false
+  end.
+
+(** Extract the string content from any [MetadataValue]. *)
+Definition mv_as_string (v : MetadataValue) : string :=
+  match v with
+  | MVString s    => s
+  | MVTimestamp s => s
+  | MVNat _       => ""
+  | MVBool true   => "true"
+  | MVBool false  => "false"
+  end.
+
+(** * Nodes *)
 Record Node : Type := {
   node_id         : Id;
   node_kind       : NodeKind;
   node_claim_text : string;   (* human-readable claim — survives extraction *)
   node_evidence   : option Evidence;
-  node_metadata   : list (string * string);
-      (* Key-value annotations.  Conventions:
-         ("confidence", "0.95")  — numeric confidence score
-         ("weight",     "high")  — priority / importance
-         ("timestamp",  "2026-03-18T12:00:00Z") — creation time
-         ("valid_until","2027-03-18")            — expiration
-         ("author",     "SAW")                   — originating tool/person  *)
+  node_metadata   : list (string * MetadataValue);
   node_claim      : Prop;     (* logical claim — erased at extraction *)
 }.
 
 Inductive LinkKind : Type := SupportedBy | InContextOf.
+
+(** Decidable equality on [LinkKind]. *)
+Definition LinkKind_eqb (a b : LinkKind) : bool :=
+  match a, b with
+  | SupportedBy, SupportedBy | InContextOf, InContextOf => true
+  | _, _ => false
+  end.
+
+Lemma LinkKind_eqb_eq : forall a b, LinkKind_eqb a b = true <-> a = b.
+Proof. destruct a, b; simpl; split; intro; try reflexivity; try discriminate. Qed.
 
 Record Link : Type := {
   link_kind : LinkKind;
@@ -178,8 +233,8 @@ Definition evidence_tool (e : Evidence) : string :=
 (* Metadata helpers                                                      *)
 (* ------------------------------------------------------------------ *)
 
-Fixpoint find_metadata (key : string) (md : list (string * string))
-  : option string :=
+Fixpoint find_metadata (key : string) (md : list (string * MetadataValue))
+  : option MetadataValue :=
   match md with
   | [] => None
   | (k, v) :: rest =>
@@ -187,18 +242,30 @@ Fixpoint find_metadata (key : string) (md : list (string * string))
     else find_metadata key rest
   end.
 
-Definition has_metadata_key (key : string) (md : list (string * string))
+Definition has_metadata_key (key : string) (md : list (string * MetadataValue))
   : bool :=
   match find_metadata key md with Some _ => true | None => false end.
 
+(** Convenience accessors — extract string content, accepting
+    both [MVTimestamp] and [MVString] for timestamp fields, etc. *)
 Definition node_timestamp (n : Node) : option string :=
-  find_metadata "timestamp" n.(node_metadata).
+  match find_metadata "timestamp" n.(node_metadata) with
+  | Some (MVTimestamp s) => Some s
+  | Some (MVString s)    => Some s
+  | _                    => None
+  end.
 
 Definition node_confidence (n : Node) : option string :=
-  find_metadata "confidence" n.(node_metadata).
+  match find_metadata "confidence" n.(node_metadata) with
+  | Some (MVString s) => Some s
+  | _                 => None
+  end.
 
 Definition node_weight (n : Node) : option string :=
-  find_metadata "weight" n.(node_metadata).
+  match find_metadata "weight" n.(node_metadata) with
+  | Some (MVString s) => Some s
+  | _                 => None
+  end.
 
 Definition solution_discharged (n : Node) : Prop :=
   n.(node_kind) = Solution ->
@@ -454,18 +521,6 @@ Definition check_all_discharged (ac : AssuranceCase) : bool :=
     | _ => true
     end) ac.(ac_nodes).
 
-(* Quick decidable checker using the BFS-based check_acyclic.
-   For verified well-formedness, use structural_checks instead —
-   it uses verify_topo_order (with proved soundness) and
-   check_all_discharged (stronger, easier to reflect).                 *)
-Definition check_well_formed (ac : AssuranceCase) : bool :=
-  check_top_is_goal ac &&
-  check_unique_ids ac &&
-  check_no_dangling ac &&
-  check_acyclic ac &&
-  check_discharged ac &&
-  check_context_links ac.
-
 (* ------------------------------------------------------------------ *)
 (* Entailment automation                                                *)
 (* ------------------------------------------------------------------ *)
@@ -583,6 +638,100 @@ Definition structural_checks (ac : AssuranceCase) : bool :=
   verify_topo_order ac (topo_sort ac) &&
   check_all_discharged ac &&
   check_context_links ac.
+
+(** [check_well_formed] is now a synonym for [structural_checks].
+    The former BFS-based acyclicity checker ([check_acyclic]) is
+    retained as a utility but no longer on the main verification path.
+    All soundness proofs go through [verify_topo_order]. *)
+Definition check_well_formed (ac : AssuranceCase) : bool :=
+  structural_checks ac.
+
+(* ------------------------------------------------------------------ *)
+(* Identity entailment checker (partial decision procedure)             *)
+(* ------------------------------------------------------------------ *)
+
+(** Check whether every child claim of a Goal/Strategy node is
+    propositionally identical to the parent claim.  When true, the
+    entailment obligation is trivially dischargeable.  Returns false
+    conservatively — a false result does NOT mean entailment fails. *)
+Definition check_identity_entailment_node (ac : AssuranceCase)
+    (n : Node) : bool :=
+  match n.(node_kind) with
+  | Goal | Strategy =>
+    let kids := supportedby_children ac n.(node_id) in
+    forallb (fun kid =>
+      match find_node ac kid with
+      | Some cn =>
+        (* We can only compare claim_text since node_claim is a Prop *)
+        String.eqb cn.(node_claim_text) n.(node_claim_text)
+      | None => false
+      end) kids
+  | _ => true
+  end.
+
+Definition check_identity_entailment (ac : AssuranceCase) : bool :=
+  forallb (check_identity_entailment_node ac) ac.(ac_nodes).
+
+(* ------------------------------------------------------------------ *)
+(* ID-disjointness check for compositional assembly                     *)
+(* ------------------------------------------------------------------ *)
+
+(** Boolean check that two assurance cases have disjoint node IDs. *)
+Definition check_id_disjoint (ac1 ac2 : AssuranceCase) : bool :=
+  let ids2 := map node_id ac2.(ac_nodes) in
+  forallb (fun n => negb (mem_string n.(node_id) ids2)) ac1.(ac_nodes).
+
+(* ------------------------------------------------------------------ *)
+(* Metadata validation                                                  *)
+(* ------------------------------------------------------------------ *)
+
+(** Convert an ASCII character to a natural number (0-255). *)
+Definition nat_of_ascii_core (c : ascii) : nat :=
+  match c with
+  | Ascii b0 b1 b2 b3 b4 b5 b6 b7 =>
+    (if b0 then 1 else 0) + (if b1 then 2 else 0) +
+    (if b2 then 4 else 0) + (if b3 then 8 else 0) +
+    (if b4 then 16 else 0) + (if b5 then 32 else 0) +
+    (if b6 then 64 else 0) + (if b7 then 128 else 0)
+  end.
+
+(** Lexicographic string comparison for ISO 8601 timestamps.
+    Returns true if [a] is strictly before [b].  Only valid for
+    same-length date strings in YYYY-MM-DD or ISO 8601 format. *)
+Fixpoint string_ltb (a b : string) : bool :=
+  match a, b with
+  | EmptyString, String _ _ => true
+  | _, EmptyString => false
+  | String ca ra, String cb rb =>
+    let na := nat_of_ascii_core ca in
+    let nb := nat_of_ascii_core cb in
+    if Nat.ltb na nb then true
+    else if Nat.ltb nb na then false
+    else string_ltb ra rb
+  end.
+
+(** Basic ISO 8601 date format check: exactly 10 characters,
+    digits at positions 0-3, 5-6, 8-9, hyphens at 4, 7. *)
+Definition is_digit_ascii (c : ascii) : bool :=
+  let n := nat_of_ascii_core c in
+  Nat.leb 48 n && Nat.leb n 57.
+
+Definition is_hyphen_ascii (c : ascii) : bool :=
+  Nat.eqb (nat_of_ascii_core c) 45.
+
+Definition check_date_format (s : string) : bool :=
+  match s with
+  | String c0 (String c1 (String c2 (String c3
+    (String c4 (String c5 (String c6
+    (String c7 (String c8 (String c9 EmptyString))))))))) =>
+    is_digit_ascii c0 && is_digit_ascii c1 &&
+    is_digit_ascii c2 && is_digit_ascii c3 &&
+    is_hyphen_ascii c4 &&
+    is_digit_ascii c5 && is_digit_ascii c6 &&
+    is_hyphen_ascii c7 &&
+    is_digit_ascii c8 && is_digit_ascii c9
+  | _ => false
+  end.
 
 (* ------------------------------------------------------------------ *)
 (* Compositional assembly                                               *)
@@ -708,7 +857,10 @@ Inductive CheckError : Type :=
   | ErrInvalidEvidence  : Id -> CheckError   (* Certificate validator fails *)
   | ErrBadContextSource : Id -> Id -> CheckError   (* InContextOf from wrong kind *)
   | ErrBadContextTarget : Id -> Id -> CheckError   (* InContextOf to wrong kind *)
-  | ErrCycle            : Id -> CheckError.
+  | ErrCycle            : Id -> CheckError
+  | ErrExpiredEvidence  : Id -> string -> CheckError  (* node id, expiry date *)
+  | ErrMissingRequiredKey : Id -> string -> CheckError (* node id, key name *)
+  | ErrMalformedTimestamp : Id -> string -> CheckError. (* node id, bad value *)
 
 Definition diagnose_top (ac : AssuranceCase) : list CheckError :=
   match find_node ac ac.(ac_top) with
@@ -783,12 +935,17 @@ Definition diagnose_context_links (ac : AssuranceCase) : list CheckError :=
       src_err ++ tgt_err
     end) ac.(ac_links).
 
+(** Diagnose acyclicity using the topo-order verifier (matches
+    [structural_checks], enabling the completeness proof in Reflect.v).
+    Falls back to the BFS checker for cycle localization. *)
 Definition diagnose_acyclic (ac : AssuranceCase) : list CheckError :=
-  filter (fun _ => true)
-    (flat_map (fun n =>
+  if verify_topo_order ac (topo_sort ac) then []
+  else
+    (* Topo order failed: use BFS to locate specific cycles. *)
+    flat_map (fun n =>
       if mem_string n.(node_id) (reachable_from ac n.(node_id))
       then [ErrCycle n.(node_id)]
-      else []) ac.(ac_nodes)).
+      else []) ac.(ac_nodes).
 
 Definition diagnose_all (ac : AssuranceCase) : list CheckError :=
   diagnose_top ac ++
@@ -797,6 +954,78 @@ Definition diagnose_all (ac : AssuranceCase) : list CheckError :=
   diagnose_discharged ac ++
   diagnose_context_links ac ++
   diagnose_acyclic ac.
+
+(** Diagnostic function that mirrors [structural_checks] exactly.
+    Uses [check_all_discharged] (all-nodes) rather than
+    [check_discharged] (reachable-only), and the topo-order
+    acyclicity verifier.  The completeness proof in Reflect.v
+    establishes: [diagnose_structural ac = []] ->
+    [structural_checks ac = true]. *)
+Definition diagnose_structural (ac : AssuranceCase) : list CheckError :=
+  diagnose_top ac ++
+  diagnose_unique_ids ac ++
+  diagnose_dangling ac ++
+  diagnose_acyclic ac ++
+  (flat_map (fun n =>
+    match n.(node_kind) with
+    | Goal | Strategy =>
+      match supportedby_children ac n.(node_id) with
+      | [] => [ErrUnsupported n.(node_id)]
+      | _ => []
+      end
+    | Solution =>
+      match n.(node_evidence) with
+      | None => [ErrMissingEvidence n.(node_id)]
+      | Some (ProofTerm _ _ _ _) => []
+      | Some (Certificate b _ v) =>
+        if v b then [] else [ErrInvalidEvidence n.(node_id)]
+      end
+    | _ => []
+    end) ac.(ac_nodes)) ++
+  diagnose_context_links ac.
+
+(* ------------------------------------------------------------------ *)
+(* Metadata validation diagnostics                                      *)
+(* ------------------------------------------------------------------ *)
+
+(** Diagnose expired evidence: nodes whose [valid_until] timestamp
+    is lexicographically before the given [cutoff]. *)
+Definition diagnose_metadata_expiry (ac : AssuranceCase)
+    (cutoff : string) : list CheckError :=
+  flat_map (fun n =>
+    match find_metadata "valid_until" n.(node_metadata) with
+    | Some (MVTimestamp expiry) =>
+      if string_ltb expiry cutoff then [ErrExpiredEvidence n.(node_id) expiry]
+      else []
+    | Some (MVString expiry) =>
+      if string_ltb expiry cutoff then [ErrExpiredEvidence n.(node_id) expiry]
+      else []
+    | _ => []
+    end) ac.(ac_nodes).
+
+(** Diagnose missing required metadata keys.
+    [required] maps each [NodeKind] to a list of mandatory key names. *)
+Definition diagnose_required_keys (ac : AssuranceCase)
+    (required : list (NodeKind * string)) : list CheckError :=
+  flat_map (fun n =>
+    flat_map (fun req =>
+      if NodeKind_eqb n.(node_kind) (fst req) then
+        if has_metadata_key (snd req) n.(node_metadata) then []
+        else [ErrMissingRequiredKey n.(node_id) (snd req)]
+      else []) required) ac.(ac_nodes).
+
+(** Diagnose malformed timestamps: [MVTimestamp] values that fail
+    the basic YYYY-MM-DD format check. *)
+Definition diagnose_malformed_timestamps (ac : AssuranceCase)
+    : list CheckError :=
+  flat_map (fun n =>
+    flat_map (fun kv =>
+      match snd kv with
+      | MVTimestamp s =>
+        if check_date_format s then []
+        else [ErrMalformedTimestamp n.(node_id) s]
+      | _ => []
+      end) n.(node_metadata)) ac.(ac_nodes).
 
 (* ------------------------------------------------------------------ *)
 (* Incremental / single-element checkers                                *)

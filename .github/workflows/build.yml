@@ -22,6 +22,14 @@ jobs:
             startGroup "Build"
             make
             endGroup
+            startGroup "Check extraction produces no warnings"
+            if grep -q 'Warning' rack.ml 2>/dev/null; then
+              echo "Extraction warnings found in rack.ml"
+              grep 'Warning' rack.ml
+              exit 1
+            fi
+            echo "No extraction warnings found"
+            endGroup
             startGroup "Check extracted OCaml compiles"
             ocamlfind ocamlopt -package str -c rack.mli rack.ml || \
               ocamlfind ocamlc -package str -c rack.mli rack.ml || \
@@ -34,4 +42,13 @@ jobs:
               ( ocamlopt -I +str str.cmxa rack.ml test_rack.ml -o test_rack && ./test_rack ) || \
               ( ocamlc -I +str str.cma rack.ml test_rack.ml -o test_rack && ./test_rack ) || \
               echo "OCaml test compilation failed (non-fatal)"
+            endGroup
+            startGroup "Generate coqdoc"
+            mkdir -p docs
+            coqdoc --html --interpolate --utf8 \
+              -R theories RACK \
+              -d docs \
+              theories/Core.v theories/Main.v theories/Reflect.v \
+              theories/Export.v theories/Example.v \
+              || echo "coqdoc generation failed (non-fatal)"
             endGroup

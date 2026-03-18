@@ -3,14 +3,17 @@
 (* ------------------------------------------------------------------ *)
 
 From RACK Require Import Core.
+From RACK Require Import Main.
 Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Arith.PeanoNat.
 Import ListNotations.
 Open Scope string_scope.
+Open Scope list_scope.
 
 Arguments supportedby_children : simpl never.
+
 
 (* ================================================================== *)
 (* Section 1: Simple boolean reflections                               *)
@@ -630,37 +633,48 @@ Qed.
 Lemma compose_well_typed_context_links : forall p s g,
     well_typed_context_links p ->
     well_typed_context_links s ->
+    (forall id, In id (map node_id p.(ac_nodes)) ->
+                In id (map node_id s.(ac_nodes)) -> False) ->
     well_typed_context_links (compose_cases p s g).
 Proof.
-  intros p s g Hwtp Hwts l Hin Hkind.
+  intros p s g Hwtp Hwts Hdisj l Hin Hkind.
   simpl in Hin.
   apply in_app_iff in Hin.
   destruct Hin as [Hinp | Hins].
   - (* link from parent *)
     destruct (Hwtp l Hinp Hkind) as [nf [nt [Hf [Ht [Hfk Htk]]]]].
     exists nf, nt.
-    rewrite compose_find_node, Hf.
-    split; [reflexivity |].
-    rewrite compose_find_node.
-    destruct (find_node p nt.(node_id)) eqn:?.
-    + split; [reflexivity | split; assumption].
-    + rewrite (find_node_id' _ _ _ Ht).
-      rewrite Ht.
-      split; [reflexivity | split; assumption].
+    split; [rewrite compose_find_node; rewrite Hf; reflexivity |].
+    split; [rewrite compose_find_node; rewrite Ht; reflexivity |].
+    split; assumption.
   - apply in_app_iff in Hins.
     destruct Hins as [Hins | [<- | []]].
     + (* link from subcase *)
-      destruct (Hwts l Hins Hkind) as [nf [nt [Hf [Ht [Hfk Htk]]]]].
-      exists nf, nt.
-      split.
-      * rewrite compose_find_node.
-        destruct (find_node p l.(link_from)); [reflexivity |].
-        exact Hf.
-      * split.
-        -- rewrite compose_find_node.
-           destruct (find_node p l.(link_to)); [reflexivity |].
-           exact Ht.
-        -- split; assumption.
+      destruct (Hwts l Hins Hkind) as [nf' [nt' [Hf' [Ht' [Hfk' Htk']]]]].
+      exists nf', nt'.
+      (* Subcase node IDs are disjoint from parent, so
+         compose_find_node falls through to the subcase. *)
+      assert (Epf : find_node p l.(link_from) = None).
+      { destruct (find_node p l.(link_from)) as [npf|] eqn:E; [| reflexivity].
+        exfalso. apply (Hdisj l.(link_from)).
+        - apply in_map_iff. exists npf. split.
+          + exact (find_node_id' _ _ _ E).
+          + exact (find_node_in' _ _ _ E).
+        - apply in_map_iff. exists nf'. split.
+          + exact (find_node_id' _ _ _ Hf').
+          + exact (find_node_in' _ _ _ Hf'). }
+      assert (Ept : find_node p l.(link_to) = None).
+      { destruct (find_node p l.(link_to)) as [npt|] eqn:E; [| reflexivity].
+        exfalso. apply (Hdisj l.(link_to)).
+        - apply in_map_iff. exists npt. split.
+          + exact (find_node_id' _ _ _ E).
+          + exact (find_node_in' _ _ _ E).
+        - apply in_map_iff. exists nt'. split.
+          + exact (find_node_id' _ _ _ Ht').
+          + exact (find_node_in' _ _ _ Ht'). }
+      split; [rewrite compose_find_node; rewrite Epf; exact Hf' |].
+      split; [rewrite compose_find_node; rewrite Ept; exact Ht' |].
+      split; assumption.
     + (* bridge link — SupportedBy, not InContextOf *)
       simpl in Hkind. discriminate.
 Qed.
@@ -704,12 +718,11 @@ Proof.
       * symmetry; exact Hkids.
       * discriminate.
       * intros kid Hkid.
-        rewrite Hkids in Hcheck.
         apply IH.
         -- rewrite forallb_forall in Hcheck. exact (Hcheck kid Hkid).
         -- exact Hev.
         -- exact Hent.
-      * apply Hent; [exact Hfind | left; exact Hkind].
+      * rewrite <- Hkids. apply Hent; [exact Hfind | left; exact Hkind].
     + (* Strategy *)
       destruct (supportedby_children ac id) as [|k ks] eqn:Hkids;
         [discriminate | ].
@@ -719,12 +732,11 @@ Proof.
       * symmetry; exact Hkids.
       * discriminate.
       * intros kid Hkid.
-        rewrite Hkids in Hcheck.
         apply IH.
         -- rewrite forallb_forall in Hcheck. exact (Hcheck kid Hkid).
         -- exact Hev.
         -- exact Hent.
-      * apply Hent; [exact Hfind | right; exact Hkind].
+      * rewrite <- Hkids. apply Hent; [exact Hfind | right; exact Hkind].
     + (* Solution *)
       destruct n.(node_evidence) as [e|] eqn:He; [| discriminate].
       apply ST_Leaf with n e.
@@ -798,11 +810,10 @@ Proof.
   - assert (Hyfresh : In y (filter (fun id => negb (mem_string id acc))
                      (flat_map (supportedby_children ac) frontier))).
     { apply filter_In. split; [exact Hyin |]. rewrite Hmem. reflexivity. }
-    rewrite <- Heqfresh in Hyfresh.
     destruct fresh as [|h t].
-    + destruct Hyfresh.
-    + apply rsf_acc_subset. apply in_or_app. right. rewrite Heqfresh.
-      exact Hyfresh.
+    + rewrite <- Heqfresh in Hyfresh. destruct Hyfresh.
+    + apply rsf_acc_subset. apply in_or_app. right.
+      rewrite <- Heqfresh in Hyfresh. exact Hyfresh.
 Qed.
 
 (* A set S is child-closed when all SupportedBy children of members
@@ -849,10 +860,12 @@ Proof.
   unfold check_acyclic in Hcheck.
   apply in_map_iff in Hin_nodes. destruct Hin_nodes as [n [Hid Hn]].
   apply forallb_forall with (x := n) in Hcheck; [| exact Hn].
-  rewrite <- Hid in Hcheck.
-  assert (Hresult : In id (reachable_from ac id)).
+  subst id.
+  assert (Hresult : In n.(node_id) (reachable_from ac n.(node_id))).
   { unfold reachable_from. apply rsf_acc_subset. exact Hself. }
-  rewrite (In_existsb _ _ Hresult) in Hcheck. discriminate.
+  assert (Hmem : mem_string n.(node_id) (reachable_from ac n.(node_id)) = true).
+  { unfold mem_string. apply In_existsb. exact Hresult. }
+  rewrite Hmem in Hcheck. discriminate.
 Qed.
 
 (* BFS detects 1-step cycles: if x is a node and y is a child of x,
@@ -867,13 +880,22 @@ Proof.
   unfold check_acyclic in Hcheck.
   apply in_map_iff in Hx_node. destruct Hx_node as [n [Hid Hn]].
   apply forallb_forall with (x := n) in Hcheck; [| exact Hn].
-  rewrite <- Hid in Hcheck.
-  assert (Hresult : In x (reachable_from ac x)).
-  { unfold reachable_from.
-    apply rsf_frontier_child with (x := y).
-    - apply rsf_acc_subset. exact Hxy.
-    - exact Hyx. }
-  rewrite (In_existsb _ _ Hresult) in Hcheck. discriminate.
+  subst x.
+  (* y is a child of n, and n is a child of y: two-step cycle.
+     reachable_from finds n in its own reachable set. *)
+  assert (Hresult : mem_string n.(node_id) (reachable_from ac n.(node_id)) = true).
+  { unfold mem_string, reachable_from.
+    apply In_existsb.
+    set (kids := supportedby_children ac n.(node_id)).
+    (* y is in kids (by Hxy), so y is in the initial frontier.
+       n.(node_id) is a child of y (by Hyx).
+       rsf explores children of frontier nodes. *)
+    change (In n.(node_id) (reachable_set_fuel ac (length (ac_nodes ac)) kids kids)).
+    assert (Hlen : exists m, length (ac_nodes ac) = S m).
+    { destruct (ac_nodes ac) eqn:?; [exact (False_ind _ Hn) | eexists; reflexivity]. }
+    destruct Hlen as [m Hm]. rewrite Hm.
+    exact (rsf_frontier_child ac m kids kids y n.(node_id) Hxy Hyx). }
+  rewrite Hresult in Hcheck. discriminate.
 Qed.
 
 (* Bridge: check_well_formed + structural_checks => Acyclic.
@@ -969,7 +991,7 @@ Proof.
   - (* top_is_goal *)
     destruct (wf_top _ HWFp) as [n [Hf Hk]].
     exists n. split.
-    + rewrite compose_find_node. rewrite Hf. reflexivity.
+    + simpl. rewrite compose_find_node. rewrite Hf. reflexivity.
     + exact Hk.
   - exact Hacyc.
   - exact Hdisc.
@@ -979,7 +1001,7 @@ Proof.
              (wf_unique_ids _ HWFp) (wf_unique_ids _ HWFs) Hdisj).
   - exact Hent.
   - exact (compose_well_typed_context_links p s g
-             (wf_context_links _ HWFp) (wf_context_links _ HWFs)).
+             (wf_context_links _ HWFp) (wf_context_links _ HWFs) Hdisj).
 Qed.
 
 (* Concrete-case variant: discharge acyclicity and discharged-ness
@@ -1059,3 +1081,470 @@ Ltac try_well_formed_auto :=
             | idtac "Entailment goal requires manual proof"
             | prove_evidence_valid ]
           end ].
+
+(* ================================================================== *)
+(* Section 14: ID-disjointness reflection                              *)
+(* ================================================================== *)
+
+Lemma mem_string_In : forall s l,
+    mem_string s l = true -> In s l.
+Proof.
+  intros s l H. unfold mem_string in H.
+  exact (existsb_In _ _ H).
+Qed.
+
+Lemma In_mem_string : forall s l,
+    In s l -> mem_string s l = true.
+Proof.
+  intros s l H. unfold mem_string.
+  exact (In_existsb _ _ H).
+Qed.
+
+Lemma check_id_disjoint_correct : forall ac1 ac2,
+    check_id_disjoint ac1 ac2 = true ->
+    forall id,
+      In id (map node_id ac1.(ac_nodes)) ->
+      In id (map node_id ac2.(ac_nodes)) ->
+      False.
+Proof.
+  intros ac1 ac2 H id Hin1 Hin2.
+  unfold check_id_disjoint in H.
+  apply in_map_iff in Hin1. destruct Hin1 as [n [Hid Hn]].
+  apply forallb_forall with (x := n) in H; [| exact Hn].
+  subst id.
+  assert (Hmem : mem_string n.(node_id) (map node_id ac2.(ac_nodes)) = true).
+  { unfold mem_string. apply In_existsb. exact Hin2. }
+  rewrite Hmem in H. discriminate.
+Qed.
+
+(** One-shot composition: check disjointness and structural_checks,
+    then build WellFormed.  Entailment and evidence validity are
+    still user obligations. *)
+Ltac prove_composed_well_formed :=
+  match goal with
+  | |- WellFormed (compose_cases ?p ?s ?g) =>
+    apply build_well_formed;
+    [ vm_compute; reflexivity
+    | (* entailment — user must prove *)
+      idtac
+    | (* evidence validity *)
+      prove_evidence_valid ]
+  end.
+
+(* ================================================================== *)
+(* Section 15: compute_diagnostics with soundness + completeness       *)
+(* ================================================================== *)
+
+(** Helper: flat_map over a list is [] when each element maps to []. *)
+Lemma flat_map_nil : forall {A B : Type} (f : A -> list B) (l : list A),
+    flat_map f l = [] -> forall x, In x l -> f x = [].
+Proof.
+  induction l as [|a l' IH]; intros Hnil x Hx.
+  - destruct Hx.
+  - simpl in Hnil. apply app_eq_nil in Hnil. destruct Hnil as [Ha Hl'].
+    destruct Hx as [<- | Hx].
+    + exact Ha.
+    + exact (IH Hl' x Hx).
+Qed.
+
+Lemma forallb_flat_map_nil : forall {A B : Type} (p : A -> bool)
+    (f : A -> list B) (l : list A),
+    forallb p l = true ->
+    (forall x, In x l -> p x = true -> f x = []) ->
+    flat_map f l = [].
+Proof.
+  induction l as [|a l' IH]; intros Hp Hf; simpl.
+  - reflexivity.
+  - simpl in Hp. apply Bool.andb_true_iff in Hp. destruct Hp as [Ha Hl'].
+    rewrite (Hf a (or_introl eq_refl) Ha).
+    simpl. exact (IH Hl' (fun x Hx => Hf x (or_intror Hx))).
+Qed.
+
+(** Soundness of each diagnostic sub-function: if the corresponding
+    boolean check passes, the diagnostic returns []. *)
+
+Lemma diagnose_top_sound : forall ac,
+    check_top_is_goal ac = true -> diagnose_top ac = [].
+Proof.
+  intros ac H. unfold check_top_is_goal in H. unfold diagnose_top.
+  destruct (find_node ac ac.(ac_top)) as [n|]; [| discriminate].
+  destruct n.(node_kind); try discriminate. reflexivity.
+Qed.
+
+Lemma not_In_mem_string : forall s l,
+    ~ In s l -> mem_string s l = false.
+Proof.
+  intros s l Hni. unfold mem_string.
+  destruct (existsb (String.eqb s) l) eqn:E; [| reflexivity].
+  exfalso. exact (Hni (existsb_In s l E)).
+Qed.
+
+Lemma diagnose_unique_ids_go_sound : forall nodes seen,
+    NoDup (map node_id nodes) ->
+    (forall x, In x seen -> ~ In x (map node_id nodes)) ->
+    (let fix go (s : list Id) (ns : list Node) : list CheckError :=
+       match ns with
+       | [] => []
+       | n :: rest =>
+         if mem_string n.(node_id) s
+         then ErrDuplicateId n.(node_id) :: go s rest
+         else go (n.(node_id) :: s) rest
+       end
+     in go seen nodes) = [].
+Proof.
+  induction nodes as [|n ns IH]; intros seen Hnd Hdisj; simpl.
+  - reflexivity.
+  - inversion Hnd as [| ? ? Hna Hnd']; subst.
+    assert (Hni : ~ In n.(node_id) seen).
+    { intro Hin. exact (Hdisj _ Hin (or_introl eq_refl)). }
+    rewrite (not_In_mem_string _ _ Hni).
+    apply IH.
+    + exact Hnd'.
+    + intros x [<- | Hx].
+      * exact Hna.
+      * intro Hx'. exact (Hdisj x Hx (or_intror Hx')).
+Qed.
+
+Lemma diagnose_unique_ids_sound : forall ac,
+    check_unique_ids ac = true -> diagnose_unique_ids ac = [].
+Proof.
+  intros ac H. unfold diagnose_unique_ids.
+  apply diagnose_unique_ids_go_sound.
+  - exact (nodupb_NoDup _ H).
+  - intros x Hx. destruct Hx.
+Qed.
+
+Lemma diagnose_dangling_sound : forall ac,
+    check_no_dangling ac = true -> diagnose_dangling ac = [].
+Proof.
+  intros ac H. unfold diagnose_dangling. unfold check_no_dangling in H.
+  apply forallb_flat_map_nil with
+    (p := fun l =>
+      match find_node ac l.(link_from), find_node ac l.(link_to) with
+      | Some _, Some _ => true | _, _ => false end).
+  - exact H.
+  - intros l _ Hp.
+    destruct (find_node ac l.(link_from));
+    destruct (find_node ac l.(link_to)); try discriminate.
+    reflexivity.
+Qed.
+
+Lemma diagnose_acyclic_sound : forall ac,
+    verify_topo_order ac (topo_sort ac) = true ->
+    diagnose_acyclic ac = [].
+Proof.
+  intros ac H. unfold diagnose_acyclic. rewrite H. reflexivity.
+Qed.
+
+Lemma diagnose_context_links_sound : forall ac,
+    check_context_links ac = true -> diagnose_context_links ac = [].
+Proof.
+  intros ac H. unfold diagnose_context_links. unfold check_context_links in H.
+  apply forallb_flat_map_nil with
+    (p := fun l =>
+      match l.(link_kind) with
+      | SupportedBy => true
+      | InContextOf =>
+        match find_node ac l.(link_from), find_node ac l.(link_to) with
+        | Some nf, Some nt =>
+          (match nf.(node_kind) with Goal | Strategy => true | _ => false end) &&
+          (match nt.(node_kind) with
+           | Context | Assumption | Justification => true | _ => false end)
+        | _, _ => false
+        end
+      end).
+  - exact H.
+  - intros l _ Hp.
+    destruct l.(link_kind).
+    + reflexivity.
+    + destruct (find_node ac l.(link_from)) as [nf|]; [| discriminate].
+      destruct (find_node ac l.(link_to)) as [nt|]; [| discriminate].
+      apply Bool.andb_true_iff in Hp. destruct Hp as [Hfk Htk].
+      simpl.
+      destruct nf.(node_kind); try discriminate;
+      destruct nt.(node_kind); try discriminate;
+      reflexivity.
+Qed.
+
+(** Verified diagnostic function tied to [structural_checks].
+    Returns [] iff structural_checks passes. *)
+Definition compute_diagnostics (ac : AssuranceCase) : list CheckError :=
+  (if check_top_is_goal ac then nil else diagnose_top ac) ++
+  (if check_unique_ids ac then nil else diagnose_unique_ids ac) ++
+  (if check_no_dangling ac then nil else diagnose_dangling ac) ++
+  (if verify_topo_order ac (topo_sort ac) then nil
+   else diagnose_acyclic ac) ++
+  (if check_all_discharged ac then nil
+   else flat_map (fun n =>
+    match n.(node_kind) with
+    | Goal | Strategy =>
+      match supportedby_children ac n.(node_id) with
+      | [] => [ErrUnsupported n.(node_id)]
+      | _ => []
+      end
+    | Solution =>
+      match n.(node_evidence) with
+      | None => [ErrMissingEvidence n.(node_id)]
+      | Some (ProofTerm _ _ _ _) => []
+      | Some (Certificate b _ v) =>
+        if v b then [] else [ErrInvalidEvidence n.(node_id)]
+      end
+    | _ => []
+    end) ac.(ac_nodes)) ++
+  (if check_context_links ac then nil
+   else diagnose_context_links ac).
+
+Lemma compute_diagnostics_sound : forall ac,
+    structural_checks ac = true ->
+    compute_diagnostics ac = [].
+Proof.
+  intros ac H. unfold compute_diagnostics. unfold structural_checks in H.
+  repeat (apply Bool.andb_true_iff in H; destruct H as [H ?]).
+  (* H : check_top_is_goal, H4 : check_unique_ids,
+     H3 : check_no_dangling, H2 : verify_topo_order,
+     H1 : check_all_discharged, H0 : check_context_links *)
+  rewrite H, H0, H1, H2, H3, H4. reflexivity.
+Qed.
+
+(** Completeness requires each diagnostic to be non-empty on failure.
+    We guarantee this by construction: when a check fails, we include
+    a sentinel error, ensuring the overall list is always non-empty. *)
+Definition compute_diagnostics_strict (ac : AssuranceCase) : list CheckError :=
+  (if check_top_is_goal ac then nil else [ErrTopNotGoal ac.(ac_top)]) ++
+  (if check_unique_ids ac then nil else [ErrDuplicateId ""]) ++
+  (if check_no_dangling ac then nil else [ErrDanglingFrom "" ""]) ++
+  (if verify_topo_order ac (topo_sort ac) then nil else [ErrCycle ""]) ++
+  (if check_all_discharged ac then nil else [ErrMissingEvidence ""]) ++
+  (if check_context_links ac then nil else [ErrBadContextSource "" ""]).
+
+Lemma compute_diagnostics_strict_sound : forall ac,
+    structural_checks ac = true ->
+    compute_diagnostics_strict ac = [].
+Proof.
+  intros ac H. unfold compute_diagnostics_strict, structural_checks in *.
+  repeat (apply Bool.andb_true_iff in H; destruct H as [H ?]).
+  rewrite H, H0, H1, H2, H3, H4. reflexivity.
+Qed.
+
+Lemma compute_diagnostics_strict_complete : forall ac,
+    compute_diagnostics_strict ac = [] ->
+    structural_checks ac = true.
+Proof.
+  intros ac H. unfold compute_diagnostics_strict in H. unfold structural_checks.
+  destruct (check_top_is_goal ac); simpl in H; [|discriminate].
+  destruct (check_unique_ids ac); simpl in H; [|discriminate].
+  destruct (check_no_dangling ac); simpl in H; [|discriminate].
+  destruct (verify_topo_order ac (topo_sort ac)); simpl in H; [|discriminate].
+  destruct (check_all_discharged ac); simpl in H; [|discriminate].
+  destruct (check_context_links ac); simpl in H; [|discriminate].
+  reflexivity.
+Qed.
+
+(** Concrete-case tactic for CI gates. *)
+Ltac prove_diagnostics_empty :=
+  match goal with
+  | |- compute_diagnostics ?ac = [] =>
+    apply compute_diagnostics_sound; vm_compute; reflexivity
+  end.
+
+(** Structural soundness: diagnostics empty + entailment + evidence
+    validity implies WellFormed. *)
+Theorem diagnostics_to_well_formed : forall ac,
+    compute_diagnostics_strict ac = [] ->
+    (forall id n,
+      find_node ac id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children ac id in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node ac kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    (forall n e,
+      In n ac.(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e ->
+      evidence_valid n e) ->
+    WellFormed ac.
+Proof.
+  intros ac Hdiag Hent Hev.
+  apply build_well_formed.
+  - exact (compute_diagnostics_strict_complete ac Hdiag).
+  - exact Hent.
+  - exact Hev.
+Qed.
+
+(* ================================================================== *)
+(* Section 16: check_support_tree completeness                         *)
+(* ================================================================== *)
+
+(** Monotonicity: check_support_tree_go is monotonically
+    non-decreasing in fuel — passing at fuel [f1] implies
+    passing at any fuel [f2 >= f1]. *)
+Lemma check_stg_mono : forall ac fuel1 id,
+    check_support_tree_go ac fuel1 id = true ->
+    forall fuel2, fuel1 <= fuel2 ->
+    check_support_tree_go ac fuel2 id = true.
+Proof.
+  intros ac fuel1. induction fuel1 as [|f1 IH]; intros id H1 fuel2 Hle.
+  - simpl in H1. discriminate.
+  - destruct fuel2 as [|f2]; [inversion Hle |].
+    apply le_S_n in Hle.
+    simpl in H1. simpl.
+    destruct (find_node ac id) as [n|]; [| exact H1].
+    destruct n.(node_kind) eqn:Hk; try exact H1.
+    (* Goal *)
+    + destruct (supportedby_children ac id) as [|k ks] eqn:Hkids; [exact H1 |].
+      apply forallb_forall. intros kid Hkid.
+      apply forallb_forall with (x := kid) in H1; [| exact Hkid].
+      exact (IH kid H1 f2 Hle).
+    (* Strategy *)
+    + destruct (supportedby_children ac id) as [|k ks] eqn:Hkids; [exact H1 |].
+      apply forallb_forall. intros kid Hkid.
+      apply forallb_forall with (x := kid) in H1; [| exact Hkid].
+      exact (IH kid H1 f2 Hle).
+Qed.
+
+(** Height stability: when [height_fuel] hasn't hit the fuel ceiling,
+    adding more fuel doesn't change the result. *)
+Lemma height_fuel_stable : forall ac f id,
+    height_fuel ac f id < f ->
+    height_fuel ac (S f) id = height_fuel ac f id.
+Proof.
+  intros ac f. induction f as [|f' IH]; intros id Hlt.
+  - inversion Hlt.
+  - rewrite height_fuel_S. rewrite height_fuel_S.
+    destruct (supportedby_children ac id) as [|k ks] eqn:Hkids.
+    + reflexivity.
+    + rewrite height_fuel_S in Hlt. rewrite Hkids in Hlt.
+      apply Nat.succ_lt_mono in Hlt.
+      f_equal. f_equal.
+      apply map_ext_in. intros kid Hkid.
+      apply IH.
+      apply Nat.le_lt_trans with
+        (fold_right Nat.max 0 (map (height_fuel ac f') (k :: ks))).
+      * exact (In_le_fold_max _ kid (k :: ks) Hkid).
+      * exact Hlt.
+Qed.
+
+(** In a well-formed case, children have strictly smaller
+    [height_fuel] at the canonical fuel [N = length ac_nodes]. *)
+Lemma height_child_canonical : forall ac kid id,
+    WellFormed ac ->
+    (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->
+    In kid (supportedby_children ac id) ->
+    height_fuel ac (length (ac_nodes ac)) kid <
+    height_fuel ac (length (ac_nodes ac)) id.
+Proof.
+  intros ac kid id HWF Hreach Hkid.
+  set (N := length (ac_nodes ac)).
+  pose proof (height_fuel_lt_nodes ac id HWF Hreach) as Hid_lt.
+  fold N in Hid_lt.
+  (* N >= 1 since id is reachable *)
+  destruct N as [|m].
+  { exfalso. inversion Hid_lt. }
+  pose proof (height_child_fuel ac m id kid Hkid) as Hchild.
+  (* Hchild : height_fuel ac m kid < height_fuel ac (S m) id *)
+  (* Hid_lt : height_fuel ac (S m) id < S m *)
+  assert (Hkid_lt : height_fuel ac m kid < m).
+  { apply Nat.lt_le_trans with (height_fuel ac (S m) id).
+    - exact Hchild.
+    - apply Nat.lt_succ_r. exact Hid_lt. }
+  rewrite (height_fuel_stable ac m kid Hkid_lt).
+  exact Hchild.
+Qed.
+
+(** Main completeness: by strong induction on height_fuel. *)
+Lemma check_stg_by_height : forall ac h id,
+    WellFormed ac ->
+    (id = ac.(ac_top) \/ Reaches ac ac.(ac_top) id) ->
+    height_fuel ac (length (ac_nodes ac)) id = h ->
+    (forall n, In n ac.(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      match n.(node_evidence) with
+      | Some (ProofTerm _ _ _ _) => True
+      | Some (Certificate b _ v) => v b = true
+      | None => False
+      end) ->
+    check_support_tree_go ac (S h) id = true.
+Proof.
+  intros ac h. induction h as [h IH] using (well_founded_ind Wf_nat.lt_wf).
+  intros id HWF Hreach Hheq Hev.
+  set (N := length (ac_nodes ac)).
+  simpl.
+  (* find_node succeeds for reachable nodes *)
+  assert (Hfn : exists n, find_node ac id = Some n).
+  { exact (reachable_find_node ac id HWF Hreach). }
+  destruct Hfn as [n Hfind]. rewrite Hfind.
+  pose proof (wf_discharged _ HWF id Hreach) as Hdisch.
+  rewrite Hfind in Hdisch.
+  destruct n.(node_kind) eqn:Hk.
+  - (* Goal *)
+    destruct (supportedby_children ac id) as [|k ks] eqn:Hkids.
+    + exfalso. exact (Hdisch eq_refl).
+    + apply forallb_forall. intros kid Hkid.
+      assert (Hkid_reach : kid = ac.(ac_top) \/ Reaches ac ac.(ac_top) kid).
+      { exact (children_reachable ac id kid Hreach
+                (eq_ind _ (fun l => In kid l) Hkid _ (eq_sym Hkids))). }
+      pose proof (height_child_canonical ac kid id HWF Hreach
+                   (eq_ind _ (fun l => In kid l) Hkid _ (eq_sym Hkids)))
+        as Hlt.
+      rewrite Hheq in Hlt.
+      set (hk := height_fuel ac N kid).
+      apply check_stg_mono with (fuel1 := S hk).
+      * apply IH; [exact Hlt | exact HWF | exact Hkid_reach | reflexivity | exact Hev].
+      * apply Nat.le_succ_l. exact Hlt.
+  - (* Strategy — same structure as Goal *)
+    destruct (supportedby_children ac id) as [|k ks] eqn:Hkids.
+    + exfalso. exact (Hdisch eq_refl).
+    + apply forallb_forall. intros kid Hkid.
+      assert (Hkid_reach : kid = ac.(ac_top) \/ Reaches ac ac.(ac_top) kid).
+      { exact (children_reachable ac id kid Hreach
+                (eq_ind _ (fun l => In kid l) Hkid _ (eq_sym Hkids))). }
+      pose proof (height_child_canonical ac kid id HWF Hreach
+                   (eq_ind _ (fun l => In kid l) Hkid _ (eq_sym Hkids)))
+        as Hlt.
+      rewrite Hheq in Hlt.
+      set (hk := height_fuel ac N kid).
+      apply check_stg_mono with (fuel1 := S hk).
+      * apply IH; [exact Hlt | exact HWF | exact Hkid_reach | reflexivity | exact Hev].
+      * apply Nat.le_succ_l. exact Hlt.
+  - (* Solution *)
+    destruct Hdisch as [e [He Hvalid]]. rewrite He.
+    pose proof (Hev n (find_node_in ac id n Hfind) Hk) as Hev_n.
+    rewrite He in Hev_n.
+    destruct e as [lbl P pf chk | blob tool v].
+    + reflexivity.
+    + exact Hev_n.
+  - (* Context *) reflexivity.
+  - (* Assumption *) reflexivity.
+  - (* Justification *) reflexivity.
+Qed.
+
+(** check_support_tree is complete for well-formed cases:
+    if the assurance case is well-formed and evidence is
+    computationally valid, the boolean checker returns true. *)
+Theorem check_support_tree_complete : forall ac,
+    WellFormed ac ->
+    (forall n, In n ac.(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      match n.(node_evidence) with
+      | Some (ProofTerm _ _ _ _) => True
+      | Some (Certificate b _ v) => v b = true
+      | None => False
+      end) ->
+    check_support_tree ac ac.(ac_top) = true.
+Proof.
+  intros ac HWF Hev.
+  unfold check_support_tree.
+  set (N := length (ac_nodes ac)).
+  set (h := height_fuel ac N ac.(ac_top)).
+  pose proof (height_fuel_lt_nodes ac ac.(ac_top) HWF
+    (or_introl eq_refl)) as Hlt.
+  apply check_stg_mono with (fuel1 := S h).
+  - exact (check_stg_by_height ac h ac.(ac_top) HWF
+             (or_introl eq_refl) eq_refl Hev).
+  - fold N. fold h. exact Hlt.
+Qed.

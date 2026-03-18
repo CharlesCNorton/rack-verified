@@ -1,4 +1,6 @@
 -R theories RACK
+-arg -w
+-arg -notation-overridden,-redundant-canonical-projection,-future-coercion-class-field
 theories/Core.v
 theories/Main.v
 theories/Reflect.v
