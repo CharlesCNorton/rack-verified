@@ -1123,6 +1123,149 @@ Definition ml_ac : AssuranceCase := {|
   ac_top := "G-sec";
 |}.
 
+(* — Helpers for the multi-level example — *)
+
+Lemma ml_children_equiv : forall u,
+    supportedby_children ml_ac u =
+    if String.eqb "G-sec" u then ["S-test"]
+    else if String.eqb "S-test" u then ["E-unit"; "E-fuzz"]
+    else [].
+Proof.
+  intro u. unfold supportedby_children, ml_ac.
+  cbn -[String.eqb].
+  destruct (String.eqb "G-sec" u) eqn:HG.
+  - apply String.eqb_eq in HG. subst u. reflexivity.
+  - cbn -[String.eqb].
+    destruct (String.eqb "S-test" u) eqn:HS.
+    + apply String.eqb_eq in HS. subst u. reflexivity.
+    + reflexivity.
+Qed.
+
+Lemma ml_find_node_equiv : forall id,
+    find_node ml_ac id =
+    if String.eqb "G-sec" id then Some ml_goal
+    else if String.eqb "S-test" id then Some ml_strategy
+    else if String.eqb "C-scope" id then Some ml_context
+    else if String.eqb "E-unit" id then Some ml_sol_unit
+    else if String.eqb "E-fuzz" id then Some ml_sol_fuzz
+    else None.
+Proof.
+  intro id. unfold find_node, ml_ac.
+  cbn -[String.eqb]. destruct (String.eqb "G-sec" id); [reflexivity |].
+  cbn -[String.eqb]. destruct (String.eqb "S-test" id); [reflexivity |].
+  cbn -[String.eqb]. destruct (String.eqb "C-scope" id); [reflexivity |].
+  cbn -[String.eqb]. destruct (String.eqb "E-unit" id); [reflexivity |].
+  cbn -[String.eqb]. destruct (String.eqb "E-fuzz" id); reflexivity.
+Qed.
+
+Definition ml_rank (id : Id) : nat :=
+  if String.eqb "G-sec" id then 2
+  else if String.eqb "S-test" id then 1
+  else 0.
+
+Lemma ml_rank_decreases : forall u v,
+    Reaches ml_ac u v -> ml_rank v < ml_rank u.
+Proof.
+  intros u v H. induction H as [u v Hstep | u w v H1 IH1 H2 IH2].
+  - rewrite ml_children_equiv in Hstep. unfold ml_rank.
+    destruct (String.eqb "G-sec" u) eqn:HG.
+    + destruct Hstep as [<- | []]. simpl. auto.
+    + destruct (String.eqb "S-test" u) eqn:HS.
+      * destruct Hstep as [<- | [<- | []]]; simpl; auto.
+      * destruct Hstep.
+  - exact (Nat.lt_trans _ _ _ IH2 IH1).
+Qed.
+
+Lemma ml_acyclic : Acyclic ml_ac.
+Proof.
+  intros id H. exact (Nat.lt_irrefl _ (ml_rank_decreases id id H)).
+Qed.
+
+Lemma ml_reaches_from_S_test : forall v,
+    Reaches ml_ac "S-test" v -> v = "E-unit" \/ v = "E-fuzz".
+Proof.
+  intros v H. remember "S-test" as src.
+  induction H as [u v Hstep | u w v H1 IH1 H2 IH2]; subst.
+  - rewrite ml_children_equiv in Hstep. simpl in Hstep.
+    destruct Hstep as [<- | [<- | []]]; [left | right]; reflexivity.
+  - destruct (IH1 eq_refl) as [-> | ->];
+      exfalso; exact (Nat.nlt_0_r _ (ml_rank_decreases _ _ H2)).
+Qed.
+
+Lemma ml_reachable_ids : forall v,
+    Reaches ml_ac "G-sec" v -> v = "S-test" \/ v = "E-unit" \/ v = "E-fuzz".
+Proof.
+  intros v H. remember "G-sec" as src.
+  induction H as [u v Hstep | u w v H1 IH1 H2 IH2]; subst.
+  - rewrite ml_children_equiv in Hstep. simpl in Hstep.
+    destruct Hstep as [<- | []]. left; reflexivity.
+  - destruct (IH1 eq_refl) as [-> | [-> | ->]].
+    + right; exact (ml_reaches_from_S_test v H2).
+    + exfalso; exact (Nat.nlt_0_r _ (ml_rank_decreases _ _ H2)).
+    + exfalso; exact (Nat.nlt_0_r _ (ml_rank_decreases _ _ H2)).
+Qed.
+
+Lemma ml_top_is_goal : top_is_goal ml_ac.
+Proof. exists ml_goal. split; reflexivity. Qed.
+
+Lemma ml_no_dangle : no_dangling_links ml_ac.
+Proof.
+  intros l Hin. simpl in Hin.
+  destruct Hin as [<- | [<- | [<- | [<- | []]]]];
+    (split; [eexists | eexists]; reflexivity).
+Qed.
+
+Lemma ml_discharged : all_reachable_discharged ml_ac.
+Proof.
+  intros id Hreach.
+  assert (Hid: id = "G-sec" \/ id = "S-test" \/ id = "E-unit" \/ id = "E-fuzz").
+  { destruct Hreach as [-> | H].
+    - left; reflexivity.
+    - right; exact (ml_reachable_ids _ H). }
+  destruct Hid as [-> | [-> | [-> | ->]]]; vm_compute.
+  - discriminate.
+  - discriminate.
+  - eexists; split; reflexivity.
+  - eexists; split; reflexivity.
+Qed.
+
+Lemma ml_entailment : forall id n,
+    find_node ml_ac id = Some n ->
+    (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+    (let kids := supportedby_children ml_ac id in
+     let child_claims :=
+       flat_map (fun kid =>
+         match find_node ml_ac kid with
+         | Some cn => [cn.(node_claim)]
+         | None     => []
+         end) kids
+     in fold_right and True child_claims -> n.(node_claim)).
+Proof.
+  intros id n Hfind Hkind.
+  rewrite ml_find_node_equiv in Hfind.
+  destruct (String.eqb "G-sec" id) eqn:H1.
+  - injection Hfind as <-. vm_compute. tauto.
+  - destruct (String.eqb "S-test" id) eqn:H2.
+    + injection Hfind as <-. vm_compute. tauto.
+    + destruct (String.eqb "C-scope" id) eqn:H3.
+      * injection Hfind as <-. destruct Hkind as [H|H]; discriminate.
+      * destruct (String.eqb "E-unit" id) eqn:H4.
+        -- injection Hfind as <-. destruct Hkind as [H|H]; discriminate.
+        -- destruct (String.eqb "E-fuzz" id) eqn:H5.
+           ++ injection Hfind as <-. destruct Hkind as [H|H]; discriminate.
+           ++ discriminate.
+Qed.
+
+Definition ml_wf : WellFormed ml_ac :=
+  {| wf_top := ml_top_is_goal;
+     wf_acyclic := ml_acyclic;
+     wf_discharged := ml_discharged;
+     wf_no_dangle := ml_no_dangle;
+     wf_entailment := ml_entailment |}.
+
+Theorem ml_supported : SupportTree ml_ac "G-sec".
+Proof. exact (assurance_case_supported ml_ac ml_wf). Qed.
+
 (* Eval vm_compute in render_dot ml_ac.             *)
 (* Eval vm_compute in render_assurance_case ml_ac.  *)
 
