@@ -258,35 +258,84 @@ Proof.
     rewrite Ha in H. discriminate.
 Qed.
 
-(** Equation lemmas for controlled unfolding (avoids simpl/cbn
-    expanding String.compare). *)
-Lemma bst_find_leaf : forall id,
-    bst_find id BSTLeaf = None.
-Proof. reflexivity. Qed.
+Opaque String.compare.
 
-Lemma bst_find_node : forall id l k v r,
-    bst_find id (BSTNode l k v r) =
-    match String.compare id k with
-    | Lt => bst_find id l | Eq => Some v | Gt => bst_find id r
+(** [bst_insert] then [bst_find] with the same key returns the value. *)
+Lemma bst_insert_find : forall id n t,
+    bst_find id (bst_insert id n t) = Some n.
+Proof.
+  intros id n t. induction t as [| l IHl k v r IHr]; simpl.
+  - rewrite string_compare_refl. reflexivity.
+  - destruct (String.compare id k) eqn:Hcmp; simpl.
+    + apply String.compare_eq_iff in Hcmp. subst k.
+      rewrite string_compare_refl. reflexivity.
+    + rewrite Hcmp. exact IHl.
+    + rewrite Hcmp. exact IHr.
+Qed.
+
+(** [bst_insert] preserves lookups for other keys. *)
+Lemma bst_insert_find_other : forall id id0 n t,
+    String.compare id id0 <> Eq ->
+    bst_find id0 (bst_insert id n t) = bst_find id0 t.
+Proof.
+  intros id id0 n t Hne.
+  induction t as [| l IHl k v r IHr]; simpl.
+  - destruct (String.compare id id0) eqn:Ho; simpl.
+    + exfalso. exact (Hne eq_refl).
+    + destruct (String.compare id0 id) eqn:Hi; try reflexivity.
+      exfalso. apply String.compare_eq_iff in Hi. subst.
+      rewrite string_compare_refl in Ho. discriminate.
+    + destruct (String.compare id0 id) eqn:Hi; try reflexivity.
+      exfalso. apply String.compare_eq_iff in Hi. subst.
+      rewrite string_compare_refl in Ho. discriminate.
+  - destruct (String.compare id k) eqn:Hcmp1; simpl.
+    + apply String.compare_eq_iff in Hcmp1. subst k.
+      destruct (String.compare id0 id) eqn:Hcmp2; try reflexivity.
+      exfalso. apply Hne. apply String.compare_eq_iff in Hcmp2.
+      subst. exact (string_compare_refl id).
+    + destruct (String.compare id0 k); try exact IHl; reflexivity.
+    + destruct (String.compare id0 k); try exact IHr; reflexivity.
+Qed.
+
+(** BST refinement: [build_bst_index] agrees with [find_node]. *)
+Lemma fold_bst_insert_correct : forall ns t id,
+    NoDup (map node_id ns) ->
+    bst_find id (fold_left (fun t0 n0 => bst_insert n0.(node_id) n0 t0)
+                            ns t) =
+    match find (fun n0 => String.eqb n0.(node_id) id) ns with
+    | Some n0 => Some n0
+    | None => bst_find id t
     end.
-Proof. reflexivity. Qed.
+Proof.
+  induction ns as [| n0 rest IH]; intros t id Hnd; simpl.
+  - reflexivity.
+  - inversion Hnd as [| ? ? Hna Hnd']; subst.
+    rewrite IH; try exact Hnd'.
+    destruct (String.eqb n0.(node_id) id) eqn:Heq.
+    + apply String.eqb_eq in Heq. subst.
+      destruct (find (fun n1 => String.eqb n1.(node_id) n0.(node_id)) rest) eqn:Hf.
+      * rename n into found.
+        apply find_some in Hf. destruct Hf as [Hin Heqb].
+        apply String.eqb_eq in Heqb.
+        exfalso. apply Hna. apply in_map_iff.
+        exists found. exact (conj Heqb Hin).
+      * rewrite bst_insert_find. reflexivity.
+    + destruct (find (fun n1 => String.eqb n1.(node_id) id) rest);
+        try reflexivity.
+      rewrite bst_insert_find_other; try reflexivity.
+      intro Habs. apply String.compare_eq_iff in Habs.
+      rewrite Habs in Heq. rewrite String.eqb_refl in Heq. discriminate.
+Qed.
 
-Lemma bst_insert_leaf : forall id n,
-    bst_insert id n BSTLeaf = BSTNode BSTLeaf id n BSTLeaf.
-Proof. reflexivity. Qed.
+Transparent String.compare.
 
-Lemma bst_insert_node : forall id n l k v r,
-    bst_insert id n (BSTNode l k v r) =
-    match String.compare id k with
-    | Lt => BSTNode (bst_insert id n l) k v r
-    | Eq => BSTNode l id n r
-    | Gt => BSTNode l k v (bst_insert id n r)
-    end.
-Proof. reflexivity. Qed.
-
-(** The general [bst_insert_find] and [build_bst_index_correct]
-    proofs require [rewrite] to match [String.compare] under the
-    [?=] notation, which Rocq 9's tactic engine rejects.  The
-    equation lemmas above provide the unfolding identities; the
-    algebraic chain is verified computationally for each concrete
-    case via [check_bst_refines]. *)
+Theorem build_bst_index_correct : forall ac id,
+    NoDup (map node_id ac.(ac_nodes)) ->
+    find_node_bst (build_bst_index ac) id = find_node ac id.
+Proof.
+  intros ac id Hnd.
+  unfold find_node_bst, build_bst_index, find_node.
+  rewrite fold_bst_insert_correct; try exact Hnd.
+  destruct (find (fun n => String.eqb n.(node_id) id) ac.(ac_nodes));
+    reflexivity.
+Qed.
