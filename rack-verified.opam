@@ -1,0 +1,23 @@
+opam-version: "2.0"
+name: "coq-rack-verified"
+version: "0.1.0"
+synopsis: "Mechanized assurance-case kernel with GSN-inspired evidence graphs"
+description: """
+RACK (Rocq Assurance Case Kernel) provides a typed graph of
+claims, strategies, contexts, and evidence inspired by Goal Structuring
+Notation (GSN). It includes machine-checked well-formedness, evidence
+coverage, acyclicity, support-tree completeness, a typed traceability
+calculus, invalidation theory, and exporters to JSON, DOT, and SACM.
+"""
+maintainer: "Charles C. Norton <machineelv@gmail.com>"
+authors: ["Charles C. Norton"]
+license: "MIT"
+homepage: "https://github.com/CharlesCNorton/rack-verified"
+bug-reports: "https://github.com/CharlesCNorton/rack-verified/issues"
+dev-repo: "git+https://github.com/CharlesCNorton/rack-verified.git"
+depends: [
+  "coq" {>= "9.0"}
+  "ocaml" {>= "4.14"}
+]
+build: [make "-j%{jobs}%"]
+install: [make "-f" "Makefile.coq" "install"]
