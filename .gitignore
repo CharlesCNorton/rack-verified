@@ -4,3 +4,7 @@
 *.glob
 *.aux
 .coq-native/
+Makefile.coq
+Makefile.coq.conf
+rack.ml
+rack.mli

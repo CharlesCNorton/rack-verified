@@ -1,0 +1,24 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: sudo chmod -R a+rwX "$GITHUB_WORKSPACE"
+
+      - uses: coq-community/docker-coq-action@v1
+        with:
+          coq_version: '9.0'
+          ocaml_version: '4.14-flambda'
+          custom_script: |
+            startGroup "Build"
+            make
+            endGroup

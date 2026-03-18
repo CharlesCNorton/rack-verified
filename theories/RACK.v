@@ -867,9 +867,17 @@ Definition node_kind_shape (nk : NodeKind) : string :=
   | Context => "note" | Assumption => "diamond" | Justification => "hexagon"
   end.
 
+Definition node_kind_color (nk : NodeKind) : string :=
+  match nk with
+  | Goal => "#c6e2ff" | Strategy => "#ffffcc" | Solution => "#c6ffc6"
+  | Context => "#f0f0f0" | Assumption => "#ffe0cc" | Justification => "#e0ccff"
+  end.
+
 Definition render_dot_node (n : Node) : string :=
   "  " ++ json_quote n.(node_id) ++ " [label=" ++ json_quote n.(node_id)
-       ++ ",shape=" ++ node_kind_shape n.(node_kind) ++ "];" ++ nl.
+       ++ ",shape=" ++ node_kind_shape n.(node_kind)
+       ++ ",style=filled,fillcolor=" ++ json_quote (node_kind_color n.(node_kind))
+       ++ "];" ++ nl.
 
 Definition render_dot_edge (l : Link) : string :=
   "  " ++ json_quote l.(link_from) ++ " -> " ++ json_quote l.(link_to)
@@ -1062,3 +1070,69 @@ Proof. exact (assurance_case_supported ex_ac ex_wf). Qed.
 (* The example renders to JSON and DOT: *)
 (* Eval vm_compute in render_assurance_case ex_ac. *)
 (* Eval vm_compute in render_dot ex_ac.             *)
+
+(* ------------------------------------------------------------------ *)
+(* 12. Multi-level example: Goal -> Strategy -> 2 Solutions + Context   *)
+(* ------------------------------------------------------------------ *)
+
+Definition ml_security_claim : Prop := True.
+Definition ml_unit_claim : Prop := 1 = 1.
+Definition ml_fuzz_claim : Prop := True.
+
+Definition ml_goal : Node := {|
+  node_id := "G-sec";
+  node_kind := Goal;
+  node_claim := ml_security_claim;
+  node_evidence := None;
+|}.
+
+Definition ml_strategy : Node := {|
+  node_id := "S-test";
+  node_kind := Strategy;
+  node_claim := ml_security_claim;
+  node_evidence := None;
+|}.
+
+Definition ml_context : Node := {|
+  node_id := "C-scope";
+  node_kind := Context;
+  node_claim := True;
+  node_evidence := None;
+|}.
+
+Definition ml_sol_unit : Node := {|
+  node_id := "E-unit";
+  node_kind := Solution;
+  node_claim := ml_unit_claim;
+  node_evidence := Some (ProofTerm ml_unit_claim eq_refl);
+|}.
+
+Definition ml_sol_fuzz : Node := {|
+  node_id := "E-fuzz";
+  node_kind := Solution;
+  node_claim := ml_fuzz_claim;
+  node_evidence := Some (Certificate "PASS:fuzz:2026-03-18" (fun s => String.eqb s "PASS:fuzz:2026-03-18"));
+|}.
+
+Definition ml_ac : AssuranceCase := {|
+  ac_nodes := [ml_goal; ml_strategy; ml_context; ml_sol_unit; ml_sol_fuzz];
+  ac_links := [{| link_kind := SupportedBy; link_from := "G-sec"; link_to := "S-test" |};
+               {| link_kind := InContextOf; link_from := "G-sec"; link_to := "C-scope" |};
+               {| link_kind := SupportedBy; link_from := "S-test"; link_to := "E-unit" |};
+               {| link_kind := SupportedBy; link_from := "S-test"; link_to := "E-fuzz" |}];
+  ac_top := "G-sec";
+|}.
+
+(* Eval vm_compute in render_dot ml_ac.             *)
+(* Eval vm_compute in render_assurance_case ml_ac.  *)
+
+(* ------------------------------------------------------------------ *)
+(* 13. Extraction                                                       *)
+(* ------------------------------------------------------------------ *)
+
+Require Extraction.
+Extraction Language OCaml.
+Extract Inlined Constant Nat.eqb => "(=)".
+Extraction "rack" render_assurance_case render_dot
+                   assurance_case_to_json render_json
+                   signed_to_evidence signed_to_json.
