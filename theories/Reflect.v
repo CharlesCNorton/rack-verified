@@ -573,3 +573,190 @@ Proof.
       * exact Hnd'.
       * intros id Hp Hs. exact (Hdisj id (or_intror Hp) Hs).
 Qed.
+
+(* ================================================================== *)
+(* Section 7: Composed supportedby_children decomposition              *)
+(* ================================================================== *)
+
+(* Key building block for composed entailment proofs.
+   In a composed case, the children of any node id decompose into:
+   - children from the parent's links
+   - children from the subcase's links
+   - the bridge target (if id is the bridge node)                      *)
+Lemma compose_supportedby_children : forall p s g id,
+    supportedby_children (compose_cases p s g) id =
+    supportedby_children p id ++
+    supportedby_children s id ++
+    (if String.eqb g id then [s.(ac_top)] else []).
+Proof.
+  intros p s g id.
+  unfold supportedby_children, compose_cases. simpl.
+  rewrite filter_app, map_app.
+  f_equal.
+  rewrite filter_app, map_app.
+  f_equal.
+  simpl.
+  destruct (String.eqb g id); simpl; reflexivity.
+Qed.
+
+(* For non-bridge parent nodes, children are unchanged.                *)
+Corollary compose_children_parent : forall p s g id,
+    String.eqb g id = false ->
+    supportedby_children s id = [] ->
+    supportedby_children (compose_cases p s g) id =
+    supportedby_children p id.
+Proof.
+  intros p s g id Hneq Hempty.
+  rewrite compose_supportedby_children, Hempty, Hneq.
+  rewrite app_nil_r. reflexivity.
+Qed.
+
+(* For subcase nodes (not in parent links), children are unchanged.    *)
+Corollary compose_children_subcase : forall p s g id,
+    String.eqb g id = false ->
+    supportedby_children p id = [] ->
+    supportedby_children (compose_cases p s g) id =
+    supportedby_children s id.
+Proof.
+  intros p s g id Hneq Hempty.
+  rewrite compose_supportedby_children, Hempty, Hneq.
+  simpl. rewrite app_nil_r. reflexivity.
+Qed.
+
+(* ================================================================== *)
+(* Section 8: Composed well_typed_context_links                        *)
+(* ================================================================== *)
+
+Lemma compose_well_typed_context_links : forall p s g,
+    well_typed_context_links p ->
+    well_typed_context_links s ->
+    well_typed_context_links (compose_cases p s g).
+Proof.
+  intros p s g Hwtp Hwts l Hin Hkind.
+  simpl in Hin.
+  apply in_app_iff in Hin.
+  destruct Hin as [Hinp | Hins].
+  - (* link from parent *)
+    destruct (Hwtp l Hinp Hkind) as [nf [nt [Hf [Ht [Hfk Htk]]]]].
+    exists nf, nt.
+    rewrite compose_find_node, Hf.
+    split; [reflexivity |].
+    rewrite compose_find_node.
+    destruct (find_node p nt.(node_id)) eqn:?.
+    + split; [reflexivity | split; assumption].
+    + rewrite (find_node_id' _ _ _ Ht).
+      rewrite Ht.
+      split; [reflexivity | split; assumption].
+  - apply in_app_iff in Hins.
+    destruct Hins as [Hins | [<- | []]].
+    + (* link from subcase *)
+      destruct (Hwts l Hins Hkind) as [nf [nt [Hf [Ht [Hfk Htk]]]]].
+      exists nf, nt.
+      split.
+      * rewrite compose_find_node.
+        destruct (find_node p l.(link_from)); [reflexivity |].
+        exact Hf.
+      * split.
+        -- rewrite compose_find_node.
+           destruct (find_node p l.(link_to)); [reflexivity |].
+           exact Ht.
+        -- split; assumption.
+    + (* bridge link — SupportedBy, not InContextOf *)
+      simpl in Hkind. discriminate.
+Qed.
+
+(* ================================================================== *)
+(* Section 9: check_support_tree_go soundness                          *)
+(* ================================================================== *)
+
+(* The boolean support-tree checker is sound: if it returns true,
+   then SupportTree holds (given entailment and evidence validity
+   assumptions that cannot be checked computationally).                *)
+Lemma check_support_tree_go_sound : forall ac fuel id,
+    check_support_tree_go ac fuel id = true ->
+    (forall n e,
+      In n ac.(ac_nodes) -> n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e -> evidence_valid n e) ->
+    (forall id' n,
+      find_node ac id' = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children ac id' in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node ac kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    SupportTree ac id.
+Proof.
+  intros ac fuel. induction fuel as [|f IH]; intros id Hcheck Hev Hent.
+  - simpl in Hcheck. discriminate.
+  - simpl in Hcheck.
+    destruct (find_node ac id) as [n|] eqn:Hfind; [| discriminate].
+    destruct n.(node_kind) eqn:Hkind.
+    + (* Goal *)
+      destruct (supportedby_children ac id) as [|k ks] eqn:Hkids;
+        [discriminate | ].
+      apply ST_Internal with n (k :: ks).
+      * exact Hfind.
+      * rewrite Hkind; discriminate.
+      * symmetry; exact Hkids.
+      * discriminate.
+      * intros kid Hkid.
+        rewrite Hkids in Hcheck.
+        apply IH.
+        -- rewrite forallb_forall in Hcheck. exact (Hcheck kid Hkid).
+        -- exact Hev.
+        -- exact Hent.
+      * apply Hent; [exact Hfind | left; exact Hkind].
+    + (* Strategy *)
+      destruct (supportedby_children ac id) as [|k ks] eqn:Hkids;
+        [discriminate | ].
+      apply ST_Internal with n (k :: ks).
+      * exact Hfind.
+      * rewrite Hkind; discriminate.
+      * symmetry; exact Hkids.
+      * discriminate.
+      * intros kid Hkid.
+        rewrite Hkids in Hcheck.
+        apply IH.
+        -- rewrite forallb_forall in Hcheck. exact (Hcheck kid Hkid).
+        -- exact Hev.
+        -- exact Hent.
+      * apply Hent; [exact Hfind | right; exact Hkind].
+    + (* Solution *)
+      destruct n.(node_evidence) as [e|] eqn:He; [| discriminate].
+      apply ST_Leaf with n e.
+      * exact Hfind.
+      * exact Hkind.
+      * exact He.
+      * exact (Hev n e (find_node_in' ac id n Hfind) Hkind He).
+    + (* Context *)
+      exact (ST_Annotation ac id n Hfind (or_introl Hkind)).
+    + (* Assumption *)
+      exact (ST_Annotation ac id n Hfind (or_intror (or_introl Hkind))).
+    + (* Justification *)
+      exact (ST_Annotation ac id n Hfind (or_intror (or_intror Hkind))).
+Qed.
+
+Lemma check_support_tree_sound : forall ac id,
+    check_support_tree ac id = true ->
+    (forall n e,
+      In n ac.(ac_nodes) -> n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e -> evidence_valid n e) ->
+    (forall id' n,
+      find_node ac id' = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children ac id' in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node ac kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    SupportTree ac id.
+Proof.
+  intros ac id. exact (check_support_tree_go_sound ac (length ac.(ac_nodes)) id).
+Qed.

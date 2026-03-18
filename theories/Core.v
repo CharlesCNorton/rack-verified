@@ -67,6 +67,8 @@ Record AssuranceCase : Type := {
 (* Graph operations                                                     *)
 (* ------------------------------------------------------------------ *)
 
+(* O(n) linear scan.  For repeated lookups on large graphs, see
+   build_node_index / find_node_indexed below.                        *)
 Definition find_node (ac : AssuranceCase) (id : Id) : option Node :=
   find (fun n => String.eqb n.(node_id) id) ac.(ac_nodes).
 
@@ -76,6 +78,38 @@ Definition supportedby_children (ac : AssuranceCase) (id : Id) : list Id :=
                (String.eqb l.(link_from) id)
                (match l.(link_kind) with SupportedBy => true | _ => false end))
             ac.(ac_links)).
+
+(* ------------------------------------------------------------------ *)
+(* Indexed node lookup                                                  *)
+(* ------------------------------------------------------------------ *)
+
+(* Precomputed association-list index.  Build once, then use
+   find_node_indexed for lookups.  Still O(n) worst case per
+   lookup but avoids the predicate overhead of find.
+   For O(log n), plug in a balanced map type.                          *)
+Definition build_node_index (ac : AssuranceCase) : list (Id * Node) :=
+  map (fun n => (n.(node_id), n)) ac.(ac_nodes).
+
+Fixpoint assoc_find (id : Id) (idx : list (Id * Node)) : option Node :=
+  match idx with
+  | [] => None
+  | (k, v) :: rest =>
+    if String.eqb k id then Some v
+    else assoc_find id rest
+  end.
+
+Definition find_node_indexed (idx : list (Id * Node))
+    (id : Id) : option Node :=
+  assoc_find id idx.
+
+Lemma find_node_indexed_correct : forall ac id,
+    find_node_indexed (build_node_index ac) id = find_node ac id.
+Proof.
+  intros ac id. unfold find_node_indexed, build_node_index, find_node.
+  induction ac.(ac_nodes) as [|n ns IH]; simpl.
+  - reflexivity.
+  - destruct (String.eqb n.(node_id) id); [reflexivity | exact IH].
+Qed.
 
 (* ------------------------------------------------------------------ *)
 (* Reachability and acyclicity                                          *)
@@ -98,6 +132,16 @@ Definition evidence_valid (n : Node) (e : Evidence) : Prop :=
   match e with
   | ProofTerm _ P _   => P = n.(node_claim)
   | Certificate b v => v b = true
+  end.
+
+(* After extraction, ProofTerm's Prop and proof witness are erased;
+   only this label survives to identify which theorem was proved.
+   Certificate evidence returns the raw blob payload.
+   Use this for audit trails and inspectable witness trees.            *)
+Definition evidence_label (e : Evidence) : string :=
+  match e with
+  | ProofTerm lbl _ _ => lbl
+  | Certificate blob _ => blob
   end.
 
 Definition solution_discharged (n : Node) : Prop :=
@@ -294,6 +338,11 @@ Definition reachable_from (ac : AssuranceCase) (start : Id) : list Id :=
   let kids := supportedby_children ac start in
   reachable_set_fuel ac (length ac.(ac_nodes)) kids kids.
 
+(* BFS-based acyclicity checker.  Works correctly on all concrete
+   graphs but does NOT have a formal soundness proof (BFS completeness
+   is unproved).  Prefer verify_topo_order / structural_checks for
+   verified workflows — those have a complete soundness proof
+   in Reflect.v (verify_topo_order_acyclic, build_well_formed).       *)
 Definition check_acyclic (ac : AssuranceCase) : bool :=
   forallb (fun n =>
     negb (mem_string n.(node_id) (reachable_from ac n.(node_id))))
@@ -349,6 +398,10 @@ Definition check_all_discharged (ac : AssuranceCase) : bool :=
     | _ => true
     end) ac.(ac_nodes).
 
+(* Quick decidable checker using the BFS-based check_acyclic.
+   For verified well-formedness, use structural_checks instead —
+   it uses verify_topo_order (with proved soundness) and
+   check_all_discharged (stronger, easier to reflect).                 *)
 Definition check_well_formed (ac : AssuranceCase) : bool :=
   check_top_is_goal ac &&
   check_unique_ids ac &&
@@ -460,8 +513,13 @@ Definition verify_topo_order (ac : AssuranceCase)
           ac.(ac_nodes) &&
   nodupb order.
 
-(* Combined structural checks: everything decidable except entailment
-   and ProofTerm-claim type matching.                                   *)
+(* Combined structural checks with proved soundness (see Reflect.v:
+   build_well_formed).  Uses verify_topo_order for acyclicity
+   (soundness proved via verify_topo_order_acyclic) and
+   check_all_discharged for evidence coverage (stronger than the
+   reachable-only check, easier to reflect).
+   For concrete assurance cases, structural_checks and
+   check_well_formed agree — see Example.v for computational proofs.   *)
 Definition structural_checks (ac : AssuranceCase) : bool :=
   check_top_is_goal ac &&
   check_unique_ids ac &&
@@ -486,10 +544,95 @@ Definition compose_cases (parent subcase : AssuranceCase)
   ac_top   := parent.(ac_top);
 |}.
 
-(* Context-link helper: all InContextOf children of a node.            *)
-Definition context_children (ac : AssuranceCase) (id : Id) : list Id :=
-  map link_to
-    (filter (fun l => andb
-               (String.eqb l.(link_from) id)
-               (match l.(link_kind) with InContextOf => true | _ => false end))
-            ac.(ac_links)).
+(* ------------------------------------------------------------------ *)
+(* Computable support-tree checker and witness                         *)
+(* ------------------------------------------------------------------ *)
+
+(* Inspectable witness of a support tree, suitable for extraction.
+   Unlike the propositional SupportTree, this carries concrete data
+   (node IDs, evidence labels) that can be examined at runtime.        *)
+Inductive SupportWitness : Type :=
+  | SW_Leaf : Id -> string -> SupportWitness
+  | SW_Internal : Id -> list SupportWitness -> SupportWitness
+  | SW_Annotation : Id -> SupportWitness.
+
+(* Boolean support-tree check.  Verifies all decidable aspects:
+   - Solutions have passing evidence
+   - Goals/Strategies have non-empty children with passing subtrees
+   - Context/Assumption/Justification nodes always pass
+   Does NOT check entailment (undecidable) or ProofTerm type
+   matching (guaranteed by Rocq's type checker, erased at extraction). *)
+Fixpoint check_support_tree_go (ac : AssuranceCase) (fuel : nat)
+    (id : Id) : bool :=
+  match fuel with
+  | 0 => false
+  | S f =>
+    match find_node ac id with
+    | None => false
+    | Some n =>
+      match n.(node_kind) with
+      | Solution =>
+        match n.(node_evidence) with
+        | Some (ProofTerm _ _ _) => true
+        | Some (Certificate b v) => v b
+        | None => false
+        end
+      | Context | Assumption | Justification => true
+      | Goal | Strategy =>
+        let kids := supportedby_children ac id in
+        match kids with
+        | [] => false
+        | _ => forallb (check_support_tree_go ac f) kids
+        end
+      end
+    end
+  end.
+
+Definition check_support_tree (ac : AssuranceCase) (id : Id) : bool :=
+  check_support_tree_go ac (length ac.(ac_nodes)) id.
+
+(* Compute an inspectable witness (if one exists). *)
+Fixpoint compute_support_witness_go (ac : AssuranceCase) (fuel : nat)
+    (id : Id) : option SupportWitness :=
+  match fuel with
+  | 0 => None
+  | S f =>
+    match find_node ac id with
+    | None => None
+    | Some n =>
+      match n.(node_kind) with
+      | Solution =>
+        match n.(node_evidence) with
+        | Some e =>
+          let valid := match e with
+            | ProofTerm _ _ _ => true
+            | Certificate b v => v b
+            end in
+          if valid then Some (SW_Leaf id (evidence_label e)) else None
+        | None => None
+        end
+      | Context | Assumption | Justification =>
+        Some (SW_Annotation id)
+      | Goal | Strategy =>
+        let kids := supportedby_children ac id in
+        match kids with
+        | [] => None
+        | _ =>
+          let child_results :=
+            map (compute_support_witness_go ac f) kids in
+          if forallb (fun o =>
+            match o with Some _ => true | None => false end)
+            child_results
+          then Some (SW_Internal id
+            (flat_map (fun o =>
+              match o with Some w => [w] | None => [] end)
+              child_results))
+          else None
+        end
+      end
+    end
+  end.
+
+Definition compute_support_witness (ac : AssuranceCase)
+    (id : Id) : option SupportWitness :=
+  compute_support_witness_go ac (length ac.(ac_nodes)) id.

@@ -50,117 +50,16 @@ Definition ex_ac : AssuranceCase := {|
   ac_top := "G1";
 |}.
 
-(* — Helpers — *)
+(* — Well-formedness via automation — *)
 
-Lemma ex_children_equiv : forall u,
-    supportedby_children ex_ac u =
-    if String.eqb "G1" u then ["E1"] else [].
-Proof.
-  intro u. unfold supportedby_children, ex_ac, ex_link.
-  cbn -[String.eqb]. destruct (String.eqb "G1" u); reflexivity.
-Qed.
-
-Lemma ex_find_node_equiv : forall id,
-    find_node ex_ac id =
-    if String.eqb "G1" id then Some ex_goal
-    else if String.eqb "E1" id then Some ex_solution
-    else None.
-Proof.
-  intro id. unfold find_node, ex_ac.
-  cbn -[String.eqb]. destruct (String.eqb "G1" id); [reflexivity |].
-  cbn -[String.eqb]. destruct (String.eqb "E1" id); reflexivity.
-Qed.
-
-Definition ex_rank (id : Id) : nat :=
-  if String.eqb "G1" id then 1 else 0.
-
-Lemma ex_rank_decreases : forall u v,
-    Reaches ex_ac u v -> ex_rank v < ex_rank u.
-Proof.
-  intros u v H. induction H as [u v Hstep | u w v H1 IH1 H2 IH2].
-  - rewrite ex_children_equiv in Hstep. unfold ex_rank.
-    destruct (String.eqb "G1" u) eqn:Heq.
-    + destruct Hstep as [<- | []]. simpl. apply Nat.lt_0_succ.
-    + destruct Hstep.
-  - exact (Nat.lt_trans _ _ _ IH2 IH1).
-Qed.
-
-Lemma ex_acyclic : Acyclic ex_ac.
-Proof.
-  intros id H.
-  exact (Nat.lt_irrefl _ (ex_rank_decreases id id H)).
-Qed.
-
-Lemma ex_no_reach_from_E1 : forall v, ~ Reaches ex_ac "E1" v.
-Proof.
-  intros v H.
-  exact (Nat.nlt_0_r _ (ex_rank_decreases _ _ H)).
-Qed.
-
-Lemma ex_reaches_from_G1 : forall u v,
-    Reaches ex_ac u v -> u = "G1" -> v = "E1".
-Proof.
-  intros u v H. induction H as [u v Hstep | u w v H1 IH1 H2 IH2]; intro Heq; subst.
-  - rewrite ex_children_equiv in Hstep. simpl in Hstep.
-    destruct Hstep as [<- | []]. reflexivity.
-  - assert (w = "E1") by exact (IH1 eq_refl). subst w.
-    exfalso. exact (ex_no_reach_from_E1 v H2).
-Qed.
-
-(* — Well-formedness — *)
-
-Lemma ex_top_is_goal : top_is_goal ex_ac.
-Proof. exists ex_goal. split; reflexivity. Qed.
-
-Lemma ex_no_dangle : no_dangling_links ex_ac.
-Proof.
-  intros l Hin. destruct Hin as [<- | []].
-  split; [exists ex_goal | exists ex_solution]; reflexivity.
-Qed.
-
-Lemma ex_discharged : all_reachable_discharged ex_ac.
-Proof.
-  intros id Hreach.
-  assert (Hid: id = "G1" \/ id = "E1").
-  { destruct Hreach as [-> | H].
-    - left; reflexivity.
-    - right; exact (ex_reaches_from_G1 _ _ H eq_refl). }
-  destruct Hid as [-> | ->]; vm_compute.
-  - discriminate.
-  - eexists; split; reflexivity.
-Qed.
-
-Lemma ex_entailment : forall id n,
-    find_node ex_ac id = Some n ->
-    (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
-    (let kids := supportedby_children ex_ac id in
-     let child_claims :=
-       flat_map (fun kid =>
-         match find_node ex_ac kid with
-         | Some cn => [cn.(node_claim)]
-         | None     => []
-         end) kids
-     in fold_right and True child_claims -> n.(node_claim)).
-Proof. solve_entailment ex_find_node_equiv. Qed.
-
-Lemma ex_context_links : well_typed_context_links ex_ac.
-Proof.
-  intros l Hin Hkind. destruct Hin as [<- | []]. discriminate.
-Qed.
-
-Definition ex_wf : WellFormed ex_ac :=
-  {| wf_top := ex_top_is_goal;
-     wf_acyclic := ex_acyclic;
-     wf_discharged := ex_discharged;
-     wf_no_dangle := ex_no_dangle;
-     wf_unique_ids := ltac:(prove_nodup);
-     wf_entailment := ex_entailment;
-     wf_context_links := ex_context_links |}.
+Definition ex_wf : WellFormed ex_ac.
+Proof. prove_well_formed_auto. Qed.
 
 Theorem ex_supported : SupportTree ex_ac "G1".
 Proof. exact (assurance_case_supported ex_ac ex_wf). Qed.
 
 Example ex_check : check_well_formed ex_ac = true := eq_refl.
+Example ex_struct_check : structural_checks ex_ac = true := eq_refl.
 
 (* ================================================================== *)
 (* Example 2: Goal -> Strategy -> 2 Solutions + Context                 *)
@@ -220,151 +119,16 @@ Definition ml_ac : AssuranceCase := {|
   ac_top := "G-sec";
 |}.
 
-(* — Helpers — *)
+(* — Well-formedness via automation — *)
 
-Lemma ml_children_equiv : forall u,
-    supportedby_children ml_ac u =
-    if String.eqb "G-sec" u then ["S-test"]
-    else if String.eqb "S-test" u then ["E-unit"; "E-fuzz"]
-    else [].
-Proof.
-  intro u. unfold supportedby_children, ml_ac.
-  cbn -[String.eqb].
-  destruct (String.eqb "G-sec" u) eqn:HG.
-  - apply String.eqb_eq in HG. subst u. reflexivity.
-  - cbn -[String.eqb].
-    destruct (String.eqb "S-test" u) eqn:HS.
-    + apply String.eqb_eq in HS. subst u. reflexivity.
-    + reflexivity.
-Qed.
-
-Lemma ml_find_node_equiv : forall id,
-    find_node ml_ac id =
-    if String.eqb "G-sec" id then Some ml_goal
-    else if String.eqb "S-test" id then Some ml_strategy
-    else if String.eqb "C-scope" id then Some ml_context
-    else if String.eqb "E-unit" id then Some ml_sol_unit
-    else if String.eqb "E-fuzz" id then Some ml_sol_fuzz
-    else None.
-Proof.
-  intro id. unfold find_node, ml_ac.
-  cbn -[String.eqb]. destruct (String.eqb "G-sec" id); [reflexivity |].
-  cbn -[String.eqb]. destruct (String.eqb "S-test" id); [reflexivity |].
-  cbn -[String.eqb]. destruct (String.eqb "C-scope" id); [reflexivity |].
-  cbn -[String.eqb]. destruct (String.eqb "E-unit" id); [reflexivity |].
-  cbn -[String.eqb]. destruct (String.eqb "E-fuzz" id); reflexivity.
-Qed.
-
-Definition ml_rank (id : Id) : nat :=
-  if String.eqb "G-sec" id then 2
-  else if String.eqb "S-test" id then 1
-  else 0.
-
-Lemma ml_rank_decreases : forall u v,
-    Reaches ml_ac u v -> ml_rank v < ml_rank u.
-Proof.
-  intros u v H. induction H as [u v Hstep | u w v H1 IH1 H2 IH2].
-  - rewrite ml_children_equiv in Hstep. unfold ml_rank.
-    destruct (String.eqb "G-sec" u) eqn:HG.
-    + destruct Hstep as [<- | []]. simpl. auto.
-    + destruct (String.eqb "S-test" u) eqn:HS.
-      * destruct Hstep as [<- | [<- | []]]; simpl; auto.
-      * destruct Hstep.
-  - exact (Nat.lt_trans _ _ _ IH2 IH1).
-Qed.
-
-Lemma ml_acyclic : Acyclic ml_ac.
-Proof.
-  intros id H. exact (Nat.lt_irrefl _ (ml_rank_decreases id id H)).
-Qed.
-
-Lemma ml_reaches_from_S_test : forall v,
-    Reaches ml_ac "S-test" v -> v = "E-unit" \/ v = "E-fuzz".
-Proof.
-  intros v H. remember "S-test" as src.
-  induction H as [u v Hstep | u w v H1 IH1 H2 IH2]; subst.
-  - rewrite ml_children_equiv in Hstep. simpl in Hstep.
-    destruct Hstep as [<- | [<- | []]]; [left | right]; reflexivity.
-  - destruct (IH1 eq_refl) as [-> | ->];
-      exfalso; exact (Nat.nlt_0_r _ (ml_rank_decreases _ _ H2)).
-Qed.
-
-Lemma ml_reachable_ids : forall v,
-    Reaches ml_ac "G-sec" v -> v = "S-test" \/ v = "E-unit" \/ v = "E-fuzz".
-Proof.
-  intros v H. remember "G-sec" as src.
-  induction H as [u v Hstep | u w v H1 IH1 H2 IH2]; subst.
-  - rewrite ml_children_equiv in Hstep. simpl in Hstep.
-    destruct Hstep as [<- | []]. left; reflexivity.
-  - destruct (IH1 eq_refl) as [-> | [-> | ->]].
-    + right; exact (ml_reaches_from_S_test v H2).
-    + exfalso; exact (Nat.nlt_0_r _ (ml_rank_decreases _ _ H2)).
-    + exfalso; exact (Nat.nlt_0_r _ (ml_rank_decreases _ _ H2)).
-Qed.
-
-(* — Well-formedness — *)
-
-Lemma ml_top_is_goal : top_is_goal ml_ac.
-Proof. exists ml_goal. split; reflexivity. Qed.
-
-Lemma ml_no_dangle : no_dangling_links ml_ac.
-Proof.
-  intros l Hin. simpl in Hin.
-  destruct Hin as [<- | [<- | [<- | [<- | []]]]];
-    (split; [eexists | eexists]; reflexivity).
-Qed.
-
-Lemma ml_discharged : all_reachable_discharged ml_ac.
-Proof.
-  intros id Hreach.
-  assert (Hid: id = "G-sec" \/ id = "S-test" \/ id = "E-unit" \/ id = "E-fuzz").
-  { destruct Hreach as [-> | H].
-    - left; reflexivity.
-    - right; exact (ml_reachable_ids _ H). }
-  destruct Hid as [-> | [-> | [-> | ->]]]; vm_compute.
-  - discriminate.
-  - discriminate.
-  - eexists; split; reflexivity.
-  - eexists; split; reflexivity.
-Qed.
-
-Lemma ml_entailment : forall id n,
-    find_node ml_ac id = Some n ->
-    (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
-    (let kids := supportedby_children ml_ac id in
-     let child_claims :=
-       flat_map (fun kid =>
-         match find_node ml_ac kid with
-         | Some cn => [cn.(node_claim)]
-         | None     => []
-         end) kids
-     in fold_right and True child_claims -> n.(node_claim)).
-Proof. solve_entailment ml_find_node_equiv. Qed.
-
-Lemma ml_context_links : well_typed_context_links ml_ac.
-Proof.
-  intros l Hin Hkind. simpl in Hin.
-  destruct Hin as [<- | [<- | [<- | [<- | []]]]]; try discriminate.
-  (* The InContextOf link: G-sec (Goal) -> C-scope (Context) *)
-  exists ml_goal, ml_context.
-  split; [reflexivity |].
-  split; [reflexivity |].
-  split; [left; reflexivity | left; reflexivity].
-Qed.
-
-Definition ml_wf : WellFormed ml_ac :=
-  {| wf_top := ml_top_is_goal;
-     wf_acyclic := ml_acyclic;
-     wf_discharged := ml_discharged;
-     wf_no_dangle := ml_no_dangle;
-     wf_unique_ids := ltac:(prove_nodup);
-     wf_entailment := ml_entailment;
-     wf_context_links := ml_context_links |}.
+Definition ml_wf : WellFormed ml_ac.
+Proof. prove_well_formed_auto. Qed.
 
 Theorem ml_supported : SupportTree ml_ac "G-sec".
 Proof. exact (assurance_case_supported ml_ac ml_wf). Qed.
 
 Example ml_check : check_well_formed ml_ac = true := eq_refl.
+Example ml_struct_check : structural_checks ml_ac = true := eq_refl.
 
 (* ================================================================== *)
 (* Example 3: signed evidence blob (external tool result)              *)
@@ -421,110 +185,16 @@ Definition sb_ac : AssuranceCase := {|
 Lemma sb_evidence_valid : evidence_valid sb_solution (signed_to_evidence saw_blob).
 Proof. exact (signed_evidence_valid saw_blob sb_solution saw_blob_valid). Qed.
 
-(* — Helpers — *)
+(* — Well-formedness via automation — *)
 
-Lemma sb_children_equiv : forall u,
-    supportedby_children sb_ac u =
-    if String.eqb "G-safe" u then ["E-saw"] else [].
-Proof.
-  intro u. unfold supportedby_children, sb_ac, sb_link.
-  cbn -[String.eqb]. destruct (String.eqb "G-safe" u); reflexivity.
-Qed.
-
-Lemma sb_find_node_equiv : forall id,
-    find_node sb_ac id =
-    if String.eqb "G-safe" id then Some sb_goal
-    else if String.eqb "E-saw" id then Some sb_solution
-    else None.
-Proof.
-  intro id. unfold find_node, sb_ac.
-  cbn -[String.eqb]. destruct (String.eqb "G-safe" id); [reflexivity |].
-  cbn -[String.eqb]. destruct (String.eqb "E-saw" id); reflexivity.
-Qed.
-
-Definition sb_rank (id : Id) : nat :=
-  if String.eqb "G-safe" id then 1 else 0.
-
-Lemma sb_rank_decreases : forall u v,
-    Reaches sb_ac u v -> sb_rank v < sb_rank u.
-Proof.
-  intros u v H. induction H as [u v Hstep | u w v H1 IH1 H2 IH2].
-  - rewrite sb_children_equiv in Hstep. unfold sb_rank.
-    destruct (String.eqb "G-safe" u) eqn:Heq.
-    + destruct Hstep as [<- | []]. simpl. apply Nat.lt_0_succ.
-    + destruct Hstep.
-  - exact (Nat.lt_trans _ _ _ IH2 IH1).
-Qed.
-
-Lemma sb_acyclic : Acyclic sb_ac.
-Proof.
-  intros id H. exact (Nat.lt_irrefl _ (sb_rank_decreases id id H)).
-Qed.
-
-Lemma sb_reaches_from_G : forall u v,
-    Reaches sb_ac u v -> u = "G-safe" -> v = "E-saw".
-Proof.
-  intros u v H. induction H as [u v Hstep | u w v H1 IH1 H2 IH2]; intro Heq; subst.
-  - rewrite sb_children_equiv in Hstep. simpl in Hstep.
-    destruct Hstep as [<- | []]. reflexivity.
-  - assert (w = "E-saw") by exact (IH1 eq_refl). subst w.
-    exfalso. exact (Nat.nlt_0_r _ (sb_rank_decreases _ _ H2)).
-Qed.
-
-(* — Well-formedness — *)
-
-Lemma sb_top_is_goal : top_is_goal sb_ac.
-Proof. exists sb_goal. split; reflexivity. Qed.
-
-Lemma sb_no_dangle : no_dangling_links sb_ac.
-Proof.
-  intros l Hin. destruct Hin as [<- | []].
-  split; [exists sb_goal | exists sb_solution]; reflexivity.
-Qed.
-
-Lemma sb_discharged : all_reachable_discharged sb_ac.
-Proof.
-  intros id Hreach.
-  assert (Hid: id = "G-safe" \/ id = "E-saw").
-  { destruct Hreach as [-> | H].
-    - left; reflexivity.
-    - right; exact (sb_reaches_from_G _ _ H eq_refl). }
-  destruct Hid as [-> | ->]; vm_compute.
-  - discriminate.
-  - eexists; split; reflexivity.
-Qed.
-
-Lemma sb_entailment : forall id n,
-    find_node sb_ac id = Some n ->
-    (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
-    (let kids := supportedby_children sb_ac id in
-     let child_claims :=
-       flat_map (fun kid =>
-         match find_node sb_ac kid with
-         | Some cn => [cn.(node_claim)]
-         | None     => []
-         end) kids
-     in fold_right and True child_claims -> n.(node_claim)).
-Proof. solve_entailment sb_find_node_equiv. Qed.
-
-Lemma sb_context_links : well_typed_context_links sb_ac.
-Proof.
-  intros l Hin Hkind. destruct Hin as [<- | []]. discriminate.
-Qed.
-
-Definition sb_wf : WellFormed sb_ac :=
-  {| wf_top := sb_top_is_goal;
-     wf_acyclic := sb_acyclic;
-     wf_discharged := sb_discharged;
-     wf_no_dangle := sb_no_dangle;
-     wf_unique_ids := ltac:(prove_nodup);
-     wf_entailment := sb_entailment;
-     wf_context_links := sb_context_links |}.
+Definition sb_wf : WellFormed sb_ac.
+Proof. prove_well_formed_auto. Qed.
 
 Theorem sb_supported : SupportTree sb_ac "G-safe".
 Proof. exact (assurance_case_supported sb_ac sb_wf). Qed.
 
 Example sb_check : check_well_formed sb_ac = true := eq_refl.
+Example sb_struct_check : structural_checks sb_ac = true := eq_refl.
 
 (* ================================================================== *)
 (* Example 4: non-trivial mathematical claim                           *)
@@ -709,6 +379,176 @@ Lemma renderers_pretty_same_ast : forall ac,
 Proof. reflexivity. Qed.
 
 (* ================================================================== *)
+(* Negative examples: checker rejects malformed cases                  *)
+(* ================================================================== *)
+
+(* Dangling link: link_to references a non-existent node.             *)
+Definition bad_dangling_ac : AssuranceCase := {|
+  ac_nodes := [{| node_id := "G"; node_kind := Goal;
+                   node_claim_text := "G"; node_evidence := None;
+                   node_claim := True |}];
+  ac_links := [{| link_kind := SupportedBy;
+                   link_from := "G"; link_to := "MISSING" |}];
+  ac_top := "G";
+|}.
+Example bad_dangling : check_well_formed bad_dangling_ac = false := eq_refl.
+Example bad_dangling_s : structural_checks bad_dangling_ac = false := eq_refl.
+
+(* Cycle: A -> B -> A.                                                 *)
+Definition bad_cycle_ac : AssuranceCase := {|
+  ac_nodes := [{| node_id := "A"; node_kind := Goal;
+                   node_claim_text := "A"; node_evidence := None;
+                   node_claim := True |};
+               {| node_id := "B"; node_kind := Strategy;
+                   node_claim_text := "B"; node_evidence := None;
+                   node_claim := True |}];
+  ac_links := [{| link_kind := SupportedBy;
+                   link_from := "A"; link_to := "B" |};
+               {| link_kind := SupportedBy;
+                   link_from := "B"; link_to := "A" |}];
+  ac_top := "A";
+|}.
+Example bad_cycle : check_well_formed bad_cycle_ac = false := eq_refl.
+Example bad_cycle_s : structural_checks bad_cycle_ac = false := eq_refl.
+
+(* Missing evidence: Solution node with no evidence.                   *)
+Definition bad_no_evidence_ac : AssuranceCase := {|
+  ac_nodes := [{| node_id := "G"; node_kind := Goal;
+                   node_claim_text := "G"; node_evidence := None;
+                   node_claim := True |};
+               {| node_id := "E"; node_kind := Solution;
+                   node_claim_text := "E"; node_evidence := None;
+                   node_claim := True |}];
+  ac_links := [{| link_kind := SupportedBy;
+                   link_from := "G"; link_to := "E" |}];
+  ac_top := "G";
+|}.
+Example bad_no_evidence : check_well_formed bad_no_evidence_ac = false := eq_refl.
+Example bad_no_evidence_s : structural_checks bad_no_evidence_ac = false := eq_refl.
+
+(* Duplicate IDs: two nodes share the same id.                        *)
+Definition bad_dup_ids_ac : AssuranceCase := {|
+  ac_nodes := [{| node_id := "X"; node_kind := Goal;
+                   node_claim_text := "X1"; node_evidence := None;
+                   node_claim := True |};
+               {| node_id := "X"; node_kind := Solution;
+                   node_claim_text := "X2";
+                   node_evidence := Some (ProofTerm "t" True I);
+                   node_claim := True |}];
+  ac_links := [{| link_kind := SupportedBy;
+                   link_from := "X"; link_to := "X" |}];
+  ac_top := "X";
+|}.
+Example bad_dup_ids : check_well_formed bad_dup_ids_ac = false := eq_refl.
+Example bad_dup_ids_s : structural_checks bad_dup_ids_ac = false := eq_refl.
+
+(* Wrong context link direction: InContextOf from Solution to Goal.   *)
+Definition bad_ctx_dir_ac : AssuranceCase := {|
+  ac_nodes := [{| node_id := "G"; node_kind := Goal;
+                   node_claim_text := "G"; node_evidence := None;
+                   node_claim := True |};
+               {| node_id := "E"; node_kind := Solution;
+                   node_claim_text := "E";
+                   node_evidence := Some (ProofTerm "t" True I);
+                   node_claim := True |};
+               {| node_id := "C"; node_kind := Context;
+                   node_claim_text := "C"; node_evidence := None;
+                   node_claim := True |}];
+  ac_links := [{| link_kind := SupportedBy;
+                   link_from := "G"; link_to := "E" |};
+               {| link_kind := InContextOf;
+                   link_from := "E"; link_to := "C" |}];
+  ac_top := "G";
+|}.
+Example bad_ctx_dir : check_well_formed bad_ctx_dir_ac = false := eq_refl.
+Example bad_ctx_dir_s : structural_checks bad_ctx_dir_ac = false := eq_refl.
+
+(* Top node is not a Goal.                                             *)
+Definition bad_top_ac : AssuranceCase := {|
+  ac_nodes := [{| node_id := "S"; node_kind := Strategy;
+                   node_claim_text := "S"; node_evidence := None;
+                   node_claim := True |}];
+  ac_links := [];
+  ac_top := "S";
+|}.
+Example bad_top : check_well_formed bad_top_ac = false := eq_refl.
+Example bad_top_s : structural_checks bad_top_ac = false := eq_refl.
+
+(* ================================================================== *)
+(* Checker equivalence: check_well_formed agrees with                  *)
+(* structural_checks on all examples (item 13).                        *)
+(* ================================================================== *)
+
+Example checkers_agree_ex :
+  check_well_formed ex_ac = structural_checks ex_ac := eq_refl.
+Example checkers_agree_ml :
+  check_well_formed ml_ac = structural_checks ml_ac := eq_refl.
+Example checkers_agree_sb :
+  check_well_formed sb_ac = structural_checks sb_ac := eq_refl.
+Example checkers_agree_ar :
+  check_well_formed ar_ac = structural_checks ar_ac := eq_refl.
+Example checkers_agree_composed :
+  check_well_formed composed_ac = structural_checks composed_ac := eq_refl.
+
+(* Also agree on all negative examples. *)
+Example checkers_agree_dangling :
+  check_well_formed bad_dangling_ac = structural_checks bad_dangling_ac := eq_refl.
+Example checkers_agree_cycle :
+  check_well_formed bad_cycle_ac = structural_checks bad_cycle_ac := eq_refl.
+Example checkers_agree_no_ev :
+  check_well_formed bad_no_evidence_ac = structural_checks bad_no_evidence_ac := eq_refl.
+
+(* ================================================================== *)
+(* Support tree checker and witness (item 14)                          *)
+(* ================================================================== *)
+
+Example ex_support_check :
+  check_support_tree ex_ac "G1" = true := eq_refl.
+Example ml_support_check :
+  check_support_tree ml_ac "G-sec" = true := eq_refl.
+Example sb_support_check :
+  check_support_tree sb_ac "G-safe" = true := eq_refl.
+Example ar_support_check :
+  check_support_tree ar_ac "G-arith" = true := eq_refl.
+
+(* Negative: support tree checker rejects malformed cases. *)
+Example bad_dangling_support :
+  check_support_tree bad_dangling_ac "G" = false := eq_refl.
+Example bad_no_evidence_support :
+  check_support_tree bad_no_evidence_ac "G" = false := eq_refl.
+
+(* Witness computation produces a value for well-formed cases. *)
+Example ex_witness_exists :
+  match compute_support_witness ex_ac "G1" with
+  | Some _ => true
+  | None => false
+  end = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Example ml_witness_exists :
+  match compute_support_witness ml_ac "G-sec" with
+  | Some _ => true
+  | None => false
+  end = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(* ================================================================== *)
+(* JSON round-trip test (item 4)                                       *)
+(* ================================================================== *)
+
+(* Export to JSON string, parse back, verify top ID survives. *)
+Example round_trip_top_id :
+  match parse_json (render_assurance_case ex_ac) with
+  | Some j =>
+    match json_to_assurance_case j with
+    | Some ac => String.eqb ac.(ac_top) "G1"
+    | None => false
+    end
+  | None => false
+  end = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(* ================================================================== *)
 (* Extraction                                                           *)
 (* ================================================================== *)
 
@@ -723,4 +563,9 @@ Extraction "rack" render_assurance_case render_assurance_case_pretty
                    assurance_case_to_json render_json render_json_pretty
                    signed_to_evidence signed_to_json
                    check_well_formed structural_checks
-                   compose_cases.
+                   compose_cases
+                   evidence_label
+                   find_node_indexed build_node_index
+                   check_support_tree compute_support_witness
+                   parse_json json_to_assurance_case
+                   hydrate_evidence json_field.

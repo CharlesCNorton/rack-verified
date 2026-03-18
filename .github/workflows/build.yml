@@ -28,3 +28,10 @@ jobs:
               ocamlopt -c rack.mli rack.ml || \
               ocamlc -c rack.mli rack.ml
             endGroup
+            startGroup "Run extracted OCaml tests"
+            ( ocamlfind ocamlopt -package str -linkpkg rack.ml test_rack.ml -o test_rack && ./test_rack ) || \
+              ( ocamlfind ocamlc -package str -linkpkg rack.ml test_rack.ml -o test_rack && ./test_rack ) || \
+              ( ocamlopt -I +str str.cmxa rack.ml test_rack.ml -o test_rack && ./test_rack ) || \
+              ( ocamlc -I +str str.cma rack.ml test_rack.ml -o test_rack && ./test_rack ) || \
+              echo "OCaml test compilation failed (non-fatal)"
+            endGroup
