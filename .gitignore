@@ -8,6 +8,7 @@ Makefile.coq
 Makefile.coq.conf
 .Makefile.coq.d
 .lia.cache
+.nia.cache
 rack.ml
 rack.mli
 *.cmi
@@ -18,8 +19,6 @@ rack.mli
 *.native
 rack_cli
 rack_bench
-rack_bridge
-rack_sacm_validate
 test_rack
 test_rack_prop
 test_rack_extended

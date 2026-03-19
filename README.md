@@ -81,38 +81,48 @@ cat case.json | ./rack_cli --dot | dot -Tpng -o case.png
 cat case.json | ./rack_cli --sacm > case.xml
 ```
 
-## File structure
+## Layout
 
 ```
-theories/
-  Types.v             Node kinds, evidence, metadata, link types
-  Graph.v             find_node, reachability, evidence helpers
-  WellFormedness.v    SupportTree, WellFormed, boolean checkers
-  TopoSort.v          Kahn's algorithm, structural_checks, completeness
-  Diagnostics.v       CheckError, diagnose_*, compose_cases, defeaters
-  ValidatorRegistry.v FFI validator dispatch
-  Core.v              Re-exports the above six modules
-  Main.v              assurance_case_supported (the central theorem)
-  Reflect.v           Boolean reflection, compositional assembly proofs
-  Json.v              JSON AST, renderer, parser
-  Dot.v               DOT/Graphviz export
-  SignedBlob.v         HMAC-style signed evidence
-  ExportUtil.v        JSON importer, hydrate, rebuild, streaming
-  Sacm.v              SACM 2.2 XML export
-  Export.v            Re-exports Json/Dot/SignedBlob/ExportUtil/Sacm
-  Notation.v          Smart constructors (mkGoal, supports, etc.)
-  EvidenceClass.v     Evidence classification, trust envelopes, freshness
-  ProofIdentity.v     Proof identity tracking across extraction
-  Entailment.v        Typeclass-based entailment automation
-  Trace.v             Traceability calculus, invalidation theory
-  Delta.v             Typed diffs, PR-gating, composition
-  Incremental.v       BST/AVL indices with refinement proofs
-  ProductLine.v       Feature models, variant projection
-  Bridge.v            SysML/AADL import, Alloy/Verus/Kani/SAW bridges
-  Conops.v            CONOPS document compiler
-  CaseStudy.v         Memory allocator case study (8 nodes, 4 tools)
-  ConopsExample.v     End-to-end CONOPS example
-  Example.v           7 examples, negative cases, extraction
+theories/               Rocq proof sources
+  Types.v                 Node kinds, evidence, metadata, link types
+  Graph.v                 find_node, reachability, evidence helpers
+  WellFormedness.v        SupportTree, WellFormed, boolean checkers
+  TopoSort.v              Kahn's algorithm, structural_checks, completeness
+  Diagnostics.v           CheckError, diagnose_*, compose_cases, defeaters
+  ValidatorRegistry.v     FFI validator dispatch
+  Core.v                  Re-exports the above six modules
+  Main.v                  assurance_case_supported (the central theorem)
+  Reflect.v               Boolean reflection, compositional assembly proofs
+  Json.v                  JSON AST, renderer, parser
+  Dot.v                   DOT/Graphviz export
+  SignedBlob.v            HMAC-style signed evidence
+  ExportUtil.v            JSON importer, hydrate, rebuild, streaming
+  Sacm.v                  SACM 2.2 XML export
+  Export.v                Re-exports Json/Dot/SignedBlob/ExportUtil/Sacm
+  Notation.v              Smart constructors (mkGoal, supports, etc.)
+  EvidenceClass.v         Evidence classification, trust envelopes, freshness
+  ProofIdentity.v         Proof identity tracking across extraction
+  Entailment.v            Typeclass-based entailment automation
+  Trace.v                 Traceability calculus, invalidation theory
+  Delta.v                 Typed diffs, PR-gating, composition
+  Incremental.v           BST/AVL indices with refinement proofs
+  ProductLine.v           Feature models, variant projection
+  Bridge.v                SysML/AADL import, Alloy/Verus/Kani/SAW bridges
+  Conops.v                CONOPS document compiler
+  CaseStudy.v             Memory allocator case study
+  ConopsExample.v         End-to-end CONOPS example
+  Example.v               7 examples, negative cases, extraction
+ocaml/                  Hand-written OCaml
+  rack_util.ml            Coq<->OCaml conversions, SHA-256, HMAC-SHA256
+  rack_cli.ml             CLI validator (stdin JSON, --check/--dot/--sacm)
+  rack_bridge.ml          FFI shims for CBMC, Kani, SAW, Verus, Alloy
+  rack_bench.ml           Benchmark harness
+  rack_sacm_validate.ml   SACM XML structure validator
+test/                   OCaml test suites
+  test_rack.ml            Unit tests for extracted code
+  test_rack_prop.ml       Property-based tests (100 random graphs)
+  test_rack_extended.ml   Delta, trace, product-line tests
 ```
 
 ## License

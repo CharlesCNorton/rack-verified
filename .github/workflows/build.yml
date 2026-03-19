@@ -37,8 +37,8 @@ jobs:
             if [ -x ./test_rack_extended ]; then ./test_rack_extended; fi
             endGroup
             startGroup "Validate SACM export structure"
-            if [ -f rack_sacm_validate.ml ]; then
-              ( ocamlfind ocamlopt -package str -linkpkg rack.ml rack_util.ml rack_sacm_validate.ml -o rack_sacm_validate 2>/dev/null && \
+            if [ -f ocaml/rack_sacm_validate.ml ]; then
+              ( ocamlfind ocamlopt -package str -linkpkg rack.ml ocaml/rack_util.ml ocaml/rack_sacm_validate.ml -o rack_sacm_validate 2>/dev/null && \
                 echo "SACM validator compiled" ) || \
               echo "SACM validator compilation skipped (non-fatal)"
             fi
