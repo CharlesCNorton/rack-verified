@@ -424,6 +424,33 @@ Proof.
   - exact Hsrc.
 Qed.
 
+(** Completeness: [trace_total] implies [check_trace_total]. *)
+Lemma check_trace_total_complete : forall tg,
+    trace_total tg -> check_trace_total tg = true.
+Proof.
+  intros tg H. unfold check_trace_total.
+  apply forallb_forall. intros r Hin.
+  destruct (H r Hin) as [tl [Htlin [Hkind Hsrc]]].
+  apply existsb_exists. exists tl. split; [exact Htlin |].
+  apply Bool.andb_true_iff. split.
+  - rewrite Hkind. reflexivity.
+  - exact Hsrc.
+Qed.
+
+(** Completeness: [trace_provenance] implies [check_trace_provenance]. *)
+Lemma check_trace_provenance_complete : forall tg,
+    trace_provenance tg -> check_trace_provenance tg = true.
+Proof.
+  intros tg H. unfold check_trace_provenance.
+  apply forallb_forall. intros n Hin.
+  destruct n.(node_kind) eqn:Hk; try reflexivity.
+  destruct (H n Hin Hk) as [tl [Htlin [Hkind Hsrc]]].
+  apply existsb_exists. exists tl. split; [exact Htlin |].
+  apply Bool.andb_true_iff. split.
+  - rewrite Hkind. reflexivity.
+  - exact Hsrc.
+Qed.
+
 (* ================================================================== *)
 (* WellTraced builder from boolean checks                              *)
 (* ================================================================== *)
