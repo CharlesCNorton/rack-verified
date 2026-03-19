@@ -522,3 +522,43 @@ Proof.
   exact (apply_delta_compose_general ac d1 d2
            (additive_implies_disjoint d1 d2 H2)).
 Qed.
+
+(* ================================================================== *)
+(* Composition from propositional disjointness                         *)
+(* ================================================================== *)
+
+(** Propositional interface to [apply_delta_compose_general]: when
+    every [RemoveNode] in d2 is disjoint from every link change in d1
+    (no [AddLink] references a removed node), composition distributes.
+    This avoids requiring the caller to compute [deltas_disjoint]. *)
+Theorem apply_delta_compose_from_hyps : forall ac d1 d2,
+    (forall nc lc,
+      In nc d2.(ad_node_changes) ->
+      In lc d1.(ad_link_changes) ->
+      node_link_disjoint nc lc = true) ->
+    apply_delta ac (compose_deltas d1 d2) =
+    apply_delta (apply_delta ac d1) d2.
+Proof.
+  intros ac d1 d2 H.
+  apply apply_delta_compose_general.
+  unfold deltas_disjoint.
+  apply forallb_forall. intros lc Hlc.
+  apply forallb_forall. intros nc Hnc.
+  exact (H nc lc Hnc Hlc).
+Qed.
+
+(** When d1 only adds links (no [RemoveLink]) and d2 only adds/updates
+    nodes (no [RemoveNode]), composition always distributes —
+    additions to different parts of the case commute. *)
+Theorem apply_delta_compose_add_only : forall ac d1 d2,
+    forallb (fun lc =>
+      match lc with AddLink _ => true | RemoveLink _ _ => true end)
+      d1.(ad_link_changes) = true ->
+    additive_delta d2 = true ->
+    apply_delta ac (compose_deltas d1 d2) =
+    apply_delta (apply_delta ac d1) d2.
+Proof.
+  intros ac d1 d2 _ Hadd.
+  exact (apply_delta_compose_general ac d1 d2
+           (additive_implies_disjoint d1 d2 Hadd)).
+Qed.
