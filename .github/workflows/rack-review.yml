@@ -1,0 +1,55 @@
+name: RACK Review
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: sudo chmod -R a+rwX "$GITHUB_WORKSPACE"
+
+      # Build rack_cli from the Rocq sources
+      - uses: coq-community/docker-coq-action@v1
+        with:
+          coq_version: '9.0'
+          ocaml_version: '4.14-flambda'
+          custom_script: |
+            startGroup "Build RACK"
+            make
+            make ocaml
+            endGroup
+            # Copy rack_cli to workspace root for later steps
+            if [ -x ./rack_cli ]; then
+              cp rack_cli "$GITHUB_WORKSPACE/rack_cli"
+              echo "rack_cli built successfully"
+            else
+              echo "WARNING: rack_cli not available"
+            fi
+
+      # Check for Abort/Admitted — hard gate
+      - name: Zero Abort/Admitted policy
+        run: |
+          if grep -rn '\bAbort\b\|\bAdmitted\b' theories/*.v; then
+            echo "::error::Found Abort or Admitted in theories/"
+            exit 1
+          fi
+          echo "No Abort or Admitted found"
+
+      # Run rack_review on any JSON case files in the diff
+      - name: RACK assurance case review
+        if: hashFiles('rack_cli') != ''
+        env:
+          RACK_CLI: ./rack_cli
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 agent/rack_review.py --pr "${{ github.event.pull_request.number }}"

@@ -63,3 +63,11 @@ jobs:
         with:
           name: coqdoc
           path: docs/
+
+      - name: Deploy coqdoc to GitHub Pages
+        if: github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          destination_dir: coqdoc
