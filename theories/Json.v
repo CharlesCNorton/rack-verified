@@ -8,6 +8,7 @@ Require Import Stdlib.Strings.Ascii.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Arith.PeanoNat.
+From Stdlib Require Import Lia.
 Import ListNotations.
 Open Scope list_scope.
 Open Scope string_scope.
@@ -825,3 +826,177 @@ Lemma parse_json_err_none : forall s,
 Proof.
   intros s H. unfold parse_json_err. rewrite H. reflexivity.
 Qed.
+
+(* ================================================================== *)
+(* Escape / parse string roundtrip                                     *)
+(* ================================================================== *)
+
+Lemma ascii_eqb_eq : forall a b : ascii,
+    ascii_eqb a b = true -> a = b.
+Proof.
+  intros [a0 a1 a2 a3 a4 a5 a6 a7] [b0 b1 b2 b3 b4 b5 b6 b7].
+  unfold ascii_eqb. intro H.
+  repeat (apply Bool.andb_true_iff in H; destruct H as [H ?]).
+  apply Bool.eqb_prop in H. apply Bool.eqb_prop in H0.
+  apply Bool.eqb_prop in H1. apply Bool.eqb_prop in H2.
+  apply Bool.eqb_prop in H3. apply Bool.eqb_prop in H4.
+  apply Bool.eqb_prop in H5. apply Bool.eqb_prop in H6.
+  subst. reflexivity.
+Qed.
+
+Lemma not_dquote_not_34 : forall c,
+    ascii_eqb c dquote_char = false ->
+    is_char_code c 34 = false.
+Proof.
+  intros [b0 b1 b2 b3 b4 b5 b6 b7] H.
+  destruct b0, b1, b2, b3, b4, b5, b6, b7;
+    vm_compute in H |- *; try reflexivity; try discriminate.
+Qed.
+
+Lemma not_backslash_not_92 : forall c,
+    ascii_eqb c backslash_char = false ->
+    is_char_code c 92 = false.
+Proof.
+  intros [b0 b1 b2 b3 b4 b5 b6 b7] H.
+  destruct b0, b1, b2, b3, b4, b5, b6, b7;
+    vm_compute in H |- *; try reflexivity; try discriminate.
+Qed.
+
+Lemma string_rev_append_assoc : forall s1 s2 s3,
+    string_rev_append s1 (String.append s2 s3) =
+    String.append (string_rev_append s1 s2) s3.
+Proof.
+  induction s1 as [|c s1' IH]; intros s2 s3; simpl.
+  - reflexivity.
+  - exact (IH (String c s2) s3).
+Qed.
+
+Lemma string_rev_append_app : forall s1 s2,
+    string_rev_append s1 s2 =
+    String.append (string_rev s1) s2.
+Proof.
+  intros s1 s2. unfold string_rev.
+  rewrite <- string_rev_append_assoc. simpl. reflexivity.
+Qed.
+
+Lemma string_rev_append_involutive : forall s acc,
+    string_rev_append (string_rev_append s acc) EmptyString =
+    string_rev_append acc s.
+Proof.
+  induction s as [|c s' IH]; intro acc; simpl.
+  - reflexivity.
+  - rewrite IH. reflexivity.
+Qed.
+
+Lemma string_rev_rev : forall s,
+    string_rev (string_rev s) = s.
+Proof.
+  intro s. unfold string_rev.
+  exact (string_rev_append_involutive s EmptyString).
+Qed.
+
+(** Core roundtrip: parsing an escaped string followed by a closing
+    double-quote reconstructs the original string. *)
+Lemma escape_parse_inverse : forall s fuel acc rest,
+    fuel > string_length s ->
+    parse_string_chars fuel
+      (String.append (escape_json_chars s) (String dquote_char rest))
+      acc =
+    Some (string_rev (string_rev_append s acc), rest).
+Proof.
+  induction s as [|c s' IH]; intros fuel acc rest Hfuel.
+  - destruct fuel as [|f]; [inversion Hfuel |].
+    simpl. reflexivity.
+  - destruct fuel as [|f]; [inversion Hfuel |].
+    simpl in Hfuel. apply Nat.succ_lt_mono in Hfuel.
+    simpl escape_json_chars.
+    change (string_rev_append (String c s') acc)
+      with (string_rev_append s' (String c acc)).
+    destruct (ascii_eqb c dquote_char) eqn:Ed.
+    { apply ascii_eqb_eq in Ed. subst c. simpl.
+      exact (IH f (String dquote_char acc) rest Hfuel). }
+    destruct (ascii_eqb c backslash_char) eqn:Eb.
+    { apply ascii_eqb_eq in Eb. subst c. simpl.
+      exact (IH f (String backslash_char acc) rest Hfuel). }
+    destruct (ascii_eqb c nl_char) eqn:En.
+    { apply ascii_eqb_eq in En. subst c. simpl.
+      exact (IH f (String nl_char acc) rest Hfuel). }
+    destruct (ascii_eqb c cr_char) eqn:Er.
+    { apply ascii_eqb_eq in Er. subst c. simpl.
+      exact (IH f (String cr_char acc) rest Hfuel). }
+    destruct (ascii_eqb c tab_char) eqn:Et.
+    { apply ascii_eqb_eq in Et. subst c. simpl.
+      exact (IH f (String tab_char acc) rest Hfuel). }
+    destruct (ascii_eqb c bs_char) eqn:Ebs.
+    { apply ascii_eqb_eq in Ebs. subst c. simpl.
+      exact (IH f (String bs_char acc) rest Hfuel). }
+    destruct (ascii_eqb c ff_char) eqn:Eff.
+    { apply ascii_eqb_eq in Eff. subst c. simpl.
+      exact (IH f (String ff_char acc) rest Hfuel). }
+    simpl.
+    rewrite (not_dquote_not_34 c Ed).
+    rewrite (not_backslash_not_92 c Eb).
+    exact (IH f (String c acc) rest Hfuel).
+Qed.
+
+(** User-facing roundtrip: parse(render(s)) = s. *)
+Theorem escape_unescape_roundtrip : forall s rest,
+    parse_string_chars (S (string_length s))
+      (String.append (escape_json_chars s) (String dquote_char rest))
+      EmptyString =
+    Some (s, rest).
+Proof.
+  intros s rest.
+  rewrite (escape_parse_inverse s (S (string_length s)) EmptyString rest
+             (Nat.lt_succ_diag_r _)).
+  unfold string_rev. rewrite string_rev_append_involutive. reflexivity.
+Qed.
+
+(* ================================================================== *)
+(* Render / parse JSON roundtrip (string case)                         *)
+(* ================================================================== *)
+
+(** The full render/parse roundtrip for JSON strings requires a
+    parse_string_chars fuel monotonicity lemma that is left for
+    the JArr/JObj roundtrip work.  The core string-level roundtrip
+    is [escape_unescape_roundtrip] above. *)
+
+(* ================================================================== *)
+(* Full AST render/parse roundtrip                                     *)
+(* ================================================================== *)
+
+(** Size measure for fuel computation. *)
+Fixpoint json_depth (j : Json) : nat :=
+  match j with
+  | JNull | JBool _ | JStr _ | JNum _ | JNeg _ | JFloat _ => 1
+  | JArr elems =>
+    S (fold_right (fun j' acc => json_depth j' + acc) 0 elems)
+  | JObj kvs =>
+    S (fold_right (fun kv acc => json_depth (snd kv) + acc) 0 kvs)
+  end.
+
+(** Literal roundtrips: null, true, false parse back correctly. *)
+Lemma render_parse_null : forall fuel rest,
+    fuel > 0 ->
+    parse_json_go fuel (String.append "null" rest) = Some (JNull, rest).
+Proof. intros [|f] rest H; [lia |]. reflexivity. Qed.
+
+Lemma render_parse_true : forall fuel rest,
+    fuel > 0 ->
+    parse_json_go fuel (String.append "true" rest) = Some (JBool true, rest).
+Proof. intros [|f] rest H; [lia |]. reflexivity. Qed.
+
+Lemma render_parse_false : forall fuel rest,
+    fuel > 0 ->
+    parse_json_go fuel (String.append "false" rest) = Some (JBool false, rest).
+Proof. intros [|f] rest H; [lia |]. reflexivity. Qed.
+
+Theorem render_parse_json_roundtrip_literals : forall fuel rest,
+    fuel > 0 ->
+    parse_json_go fuel (String.append "null" rest) = Some (JNull, rest) /\
+    parse_json_go fuel (String.append "true" rest) = Some (JBool true, rest) /\
+    parse_json_go fuel (String.append "false" rest) = Some (JBool false, rest).
+Proof.
+  intros [|f] rest H; [lia |]. repeat split; reflexivity.
+Qed.
+
