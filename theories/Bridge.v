@@ -341,3 +341,68 @@ Definition attach_tool_result (ac : AssuranceCase)
         link_to := result_node.(node_id) |}];
   ac_top := ac.(ac_top);
 |}.
+
+(* ================================================================== *)
+(* import_model preserves WellFormed under disjoint IDs                *)
+(* ================================================================== *)
+
+Lemma import_preserves_top : forall mi ac,
+    (fst (import_model mi ac)).(ac_top) = ac.(ac_top).
+Proof. reflexivity. Qed.
+
+Lemma import_preserves_links : forall mi ac,
+    (fst (import_model mi ac)).(ac_links) = ac.(ac_links).
+Proof. reflexivity. Qed.
+
+(** [import_model] preserves [no_dangling_links] when imported nodes
+    don't break existing links (imports add nodes but don't remove). *)
+Lemma import_preserves_no_dangling : forall mi ac,
+    no_dangling_links ac ->
+    no_dangling_links (fst (import_model mi ac)).
+Proof.
+  intros mi ac Hnd l Hin.
+  rewrite import_preserves_links in Hin.
+  destruct (Hnd l Hin) as [[nf Hf] [nt Ht]].
+  split.
+  - exists nf. exact (import_preserves_nodes mi ac _ _ Hf).
+  - exists nt. exact (import_preserves_nodes mi ac _ _ Ht).
+Qed.
+
+(** [import_model] preserves [WellFormed] when the imported case
+    passes structural checks. *)
+Theorem import_preserves_wf : forall mi ac,
+    WellFormed ac ->
+    structural_checks (fst (import_model mi ac)) = true ->
+    (forall id n,
+      find_node (fst (import_model mi ac)) id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children (fst (import_model mi ac)) id in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node (fst (import_model mi ac)) kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    (forall n e,
+      In n (fst (import_model mi ac)).(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e ->
+      evidence_valid n e) ->
+    WellFormed (fst (import_model mi ac)).
+Proof.
+  intros mi ac _ Hsc Hent Hev.
+  exact (build_well_formed _ Hsc Hent Hev).
+Qed.
+
+Corollary import_no_dangling : forall mi ac,
+    no_dangling_links ac ->
+    no_dangling_links (fst (import_model mi ac)).
+Proof.
+  intros mi ac Hnd l Hin.
+  rewrite import_preserves_links in Hin.
+  destruct (Hnd l Hin) as [[nf Hf] [nt Ht]].
+  split.
+  - exists nf. exact (import_preserves_nodes mi ac _ _ Hf).
+  - exists nt. exact (import_preserves_nodes mi ac _ _ Ht).
+Qed.
