@@ -202,3 +202,30 @@ Definition solution_discharged (n : Node) : Prop :=
   exists e,
     n.(node_evidence) = Some e /\
     evidence_valid n e.
+
+(* ------------------------------------------------------------------ *)
+(* Evidence validity decidability                                      *)
+(* ------------------------------------------------------------------ *)
+
+(** Decidability of [evidence_valid] for [Certificate] evidence.
+    ProofTerm validity ([P = node_claim]) is propositional equality
+    and not generally decidable; Certificate validity is a boolean
+    computation and always decidable. *)
+Lemma evidence_valid_certificate_dec : forall n b tool v,
+    {evidence_valid n (Certificate b tool v)} +
+    {~ evidence_valid n (Certificate b tool v)}.
+Proof.
+  intros n b tool v. unfold evidence_valid.
+  destruct (v b) eqn:E.
+  - left. reflexivity.
+  - right. intro H. rewrite H in E. discriminate.
+Defined.
+
+(** Boolean evidence validity check agrees with [evidence_valid]
+    for [Certificate] evidence. *)
+Lemma evidence_runtime_check_certificate : forall n b tool v,
+    evidence_runtime_check (Certificate b tool v) = true <->
+    evidence_valid n (Certificate b tool v).
+Proof.
+  intros. unfold evidence_runtime_check, evidence_valid. split; exact (fun H => H).
+Qed.
