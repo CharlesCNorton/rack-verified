@@ -91,18 +91,7 @@ Proof.
   - exact Hto.
 Qed.
 
-(* index_of properties.                                                *)
-
-Lemma index_of_Some_In : forall s l i,
-    index_of s l = Some i -> In s l.
-Proof.
-  intros s l. induction l as [|x xs IH]; intros i H; simpl in H.
-  - discriminate.
-  - destruct (String.eqb s x) eqn:Heq.
-    + left. apply String.eqb_eq in Heq. exact (eq_sym Heq).
-    + destruct (index_of s xs) eqn:Hrest; [| discriminate].
-      right. exact (IH n eq_refl).
-Qed.
+(* index_of_Some_In, index_of_In, index_of_lt are in TopoSort.v. *)
 
 Lemma index_of_In : forall s l,
     In s l -> NoDup l -> exists i, index_of s l = Some i.
@@ -2184,5 +2173,195 @@ Proof.
             (check_no_dangling_correct ac
               (diagnose_dangling_nil_check ac Hdang)) Hctx).
   reflexivity.
+Qed.
+
+(* ================================================================== *)
+(* Factored well-formedness tactic                                     *)
+(* ================================================================== *)
+
+Ltac prove_evidence_valid_robust :=
+  intros n e Hin Hkind He; simpl in Hin;
+  repeat (destruct Hin as [<- | Hin];
+    [try discriminate; injection He as <-;
+     first [vm_compute; reflexivity | reflexivity] |]);
+  destruct Hin as [].
+
+Ltac prove_well_formed_full :=
+  match goal with
+  | |- WellFormed ?ac =>
+    apply build_well_formed;
+    [ vm_compute; reflexivity
+    | intros ? ? Hfind Hkind;
+      vm_compute in Hfind;
+      repeat match type of Hfind with
+      | (if ?c then _ else _) = _ =>
+          destruct c eqn:?;
+          [ injection Hfind as <-;
+            first [ vm_compute; tauto
+                  | vm_compute; intuition
+                  | vm_compute; firstorder
+                  | exfalso; destruct Hkind as [? | ?]; discriminate ]
+          | ]
+      end;
+      try discriminate
+    | prove_evidence_valid_robust ]
+  end.
+
+(* ================================================================== *)
+(* check_all_discharged completeness                                   *)
+(* ================================================================== *)
+
+Lemma check_all_discharged_complete : forall ac,
+    (forall n, In n ac.(ac_nodes) ->
+      match n.(node_kind) with
+      | Solution =>
+        match n.(node_evidence) with
+        | Some (Certificate b _ v) => v b = true
+        | Some (ProofTerm _ _ _ _) => True
+        | None => False
+        end
+      | Goal | Strategy =>
+        supportedby_children ac n.(node_id) <> []
+      | _ => True
+      end) ->
+    check_all_discharged ac = true.
+Proof.
+  intros ac H. unfold check_all_discharged.
+  apply forallb_forall. intros n Hin.
+  pose proof (H n Hin) as Hn.
+  destruct n.(node_kind) eqn:Hk.
+  - destruct (supportedby_children ac n.(node_id)) eqn:Hkids;
+      [exfalso; exact (Hn eq_refl) | reflexivity].
+  - destruct (supportedby_children ac n.(node_id)) eqn:Hkids;
+      [exfalso; exact (Hn eq_refl) | reflexivity].
+  - destruct n.(node_evidence) as [[? ? ? ?|b ? v]|].
+    + reflexivity.
+    + exact Hn.
+    + destruct Hn.
+  - reflexivity.
+  - reflexivity.
+  - reflexivity.
+Qed.
+
+(* ================================================================== *)
+(* BFS reachability soundness                                          *)
+(* ================================================================== *)
+
+Lemma rsf_sound : forall ac fuel frontier acc start,
+    (forall w, In w acc -> Reaches ac start w) ->
+    (forall w, In w frontier -> In w acc) ->
+    forall v,
+    In v (reachable_set_fuel ac fuel frontier acc) ->
+    Reaches ac start v.
+Proof.
+  intros ac fuel. induction fuel as [|f IH];
+    intros frontier acc start Hacc Hsub v Hin.
+  - simpl in Hin. exact (Hacc v Hin).
+  - simpl in Hin.
+    remember (filter (fun id => negb (mem_string id acc))
+               (flat_map (supportedby_children ac) frontier)) as fresh.
+    destruct fresh as [|h t].
+    + exact (Hacc v Hin).
+    + apply (IH (h :: t) (acc ++ h :: t) start); [| | exact Hin].
+      * intros w Hw. apply in_app_iff in Hw.
+        destruct Hw as [Hw | Hw].
+        -- exact (Hacc w Hw).
+        -- rewrite Heqfresh in Hw.
+           apply filter_In in Hw. destruct Hw as [Hw _].
+           apply in_flat_map in Hw. destruct Hw as [parent [Hpin Hchild]].
+           exact (R_Trans ac start parent w
+                    (Hacc parent (Hsub parent Hpin))
+                    (R_Step ac parent w Hchild)).
+      * intros w Hw. apply in_or_app. right. exact Hw.
+Qed.
+
+Lemma reachable_from_sound : forall ac start v,
+    In v (reachable_from ac start) ->
+    Reaches ac start v.
+Proof.
+  intros ac start v Hin.
+  unfold reachable_from in Hin.
+  exact (rsf_sound ac _ _ _ start
+           (fun w Hw => R_Step ac start w Hw)
+           (fun w Hw => Hw)
+           v Hin).
+Qed.
+
+Theorem check_acyclic_complete : forall ac,
+    no_dangling_links ac ->
+    Acyclic ac ->
+    check_acyclic ac = true.
+Proof.
+  intros ac Hnd Hacyc. unfold check_acyclic.
+  apply forallb_forall. intros n Hin.
+  apply Bool.negb_true_iff.
+  destruct (mem_string n.(node_id) (reachable_from ac n.(node_id))) eqn:E;
+    [| reflexivity].
+  exfalso.
+  apply existsb_In in E.
+  exact (Hacyc n.(node_id) (reachable_from_sound ac n.(node_id) n.(node_id) E)).
+Qed.
+
+(* ================================================================== *)
+(* Checker relationship lemmas                                         *)
+(* ================================================================== *)
+
+Lemma check_well_formed_equiv : forall ac,
+    check_well_formed ac =
+    (structural_checks ac && check_defeaters ac).
+Proof. reflexivity. Qed.
+
+Lemma checkers_agree_no_defeaters : forall ac,
+    (forall l, In l ac.(ac_links) -> l.(link_kind) <> Defeater) ->
+    check_well_formed ac = structural_checks ac.
+Proof.
+  intros ac Hnd. unfold check_well_formed.
+  assert (Hdef : check_defeaters ac = true).
+  { unfold check_defeaters. apply forallb_forall.
+    intros l Hin. destruct l.(link_kind) eqn:Hk; [reflexivity | reflexivity |].
+    exfalso. exact (Hnd l Hin Hk). }
+  rewrite Hdef, Bool.andb_true_r. reflexivity.
+Qed.
+
+Lemma structural_implies_well_formed_iff : forall ac,
+    structural_checks ac = true ->
+    check_well_formed ac = check_defeaters ac.
+Proof.
+  intros ac H. unfold check_well_formed. rewrite H. reflexivity.
+Qed.
+
+
+(* ================================================================== *)
+(* Compositional well-formedness from structural_checks                *)
+(* ================================================================== *)
+
+Theorem compose_well_formed_structural : forall p s g,
+    WellFormed p ->
+    WellFormed s ->
+    (exists ng, find_node p g = Some ng) ->
+    (exists nt, find_node s s.(ac_top) = Some nt) ->
+    (forall id, In id (map node_id p.(ac_nodes)) ->
+                In id (map node_id s.(ac_nodes)) -> False) ->
+    structural_checks (compose_cases p s g) = true ->
+    (forall n e,
+      In n (compose_cases p s g).(ac_nodes) ->
+      n.(node_kind) = Solution ->
+      n.(node_evidence) = Some e ->
+      evidence_valid n e) ->
+    (forall id n,
+      find_node (compose_cases p s g) id = Some n ->
+      (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+      (let kids := supportedby_children (compose_cases p s g) id in
+       let child_claims :=
+         flat_map (fun kid =>
+           match find_node (compose_cases p s g) kid with
+           | Some cn => [cn.(node_claim)]
+           | None     => []
+           end) kids
+       in fold_right and True child_claims -> n.(node_claim))) ->
+    WellFormed (compose_cases p s g).
+Proof.
+  intros p s g HWFp HWFs Hng Hnt Hdisj Hstruct Hev Hent.
+  exact (build_well_formed (compose_cases p s g) Hstruct Hent Hev).
 Qed.
 
