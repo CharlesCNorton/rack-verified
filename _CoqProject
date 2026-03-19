@@ -24,6 +24,7 @@ theories/Trace.v
 theories/Delta.v
 theories/Incremental.v
 theories/ProductLine.v
+theories/Serialize.v
 theories/Bridge.v
 theories/Conops.v
 theories/CaseStudy.v
