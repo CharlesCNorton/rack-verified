@@ -4,6 +4,7 @@
 (* ------------------------------------------------------------------ *)
 
 From RACK Require Import Core.
+From RACK Require Import Reflect.
 Require Import Stdlib.Strings.String.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
@@ -445,3 +446,70 @@ Definition check_monotone_support (plc : ProductLineCase)
             | [] => true | _ => false end)
     | _ => true
     end) ac.(ac_nodes).
+
+(* ================================================================== *)
+(* family_wide WellFormed from structural checks                       *)
+(* ================================================================== *)
+
+(** Build [family_wide WellFormed] from per-variant structural checks
+    plus per-variant entailment and evidence validity.  This lifts
+    [build_well_formed] to the product-line level, covering all
+    feature annotations (not just [FETrue]). *)
+Theorem family_wide_wf_from_structural : forall plc,
+    (forall v, valid_variant plc.(plc_fm) v = true ->
+      structural_checks (project_variant plc v) = true) ->
+    (forall v, valid_variant plc.(plc_fm) v = true ->
+      forall id n,
+        find_node (project_variant plc v) id = Some n ->
+        (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+        (let kids := supportedby_children (project_variant plc v) id in
+         let child_claims :=
+           flat_map (fun kid =>
+             match find_node (project_variant plc v) kid with
+             | Some cn => [cn.(node_claim)]
+             | None     => []
+             end) kids
+         in fold_right and True child_claims -> n.(node_claim))) ->
+    (forall v, valid_variant plc.(plc_fm) v = true ->
+      forall n e,
+        In n (project_variant plc v).(ac_nodes) ->
+        n.(node_kind) = Solution ->
+        n.(node_evidence) = Some e ->
+        evidence_valid n e) ->
+    family_wide plc WellFormed.
+Proof.
+  intros plc Hstruct Hent Hev v Hv.
+  exact (build_well_formed (project_variant plc v)
+           (Hstruct v Hv) (Hent v Hv) (Hev v Hv)).
+Qed.
+
+(** Computational version: if [check_variant_wf] passes for all valid
+    variants (decidable for finite feature sets), the structural
+    premise of [family_wide_wf_from_structural] is satisfied. *)
+Corollary family_wide_wf_check : forall plc,
+    (forall v, valid_variant plc.(plc_fm) v = true ->
+      check_variant_wf plc v = true) ->
+    (forall v, valid_variant plc.(plc_fm) v = true ->
+      forall id n,
+        find_node (project_variant plc v) id = Some n ->
+        (n.(node_kind) = Goal \/ n.(node_kind) = Strategy) ->
+        (let kids := supportedby_children (project_variant plc v) id in
+         let child_claims :=
+           flat_map (fun kid =>
+             match find_node (project_variant plc v) kid with
+             | Some cn => [cn.(node_claim)]
+             | None     => []
+             end) kids
+         in fold_right and True child_claims -> n.(node_claim))) ->
+    (forall v, valid_variant plc.(plc_fm) v = true ->
+      forall n e,
+        In n (project_variant plc v).(ac_nodes) ->
+        n.(node_kind) = Solution ->
+        n.(node_evidence) = Some e ->
+        evidence_valid n e) ->
+    family_wide plc WellFormed.
+Proof.
+  intros plc Hcheck Hent Hev.
+  apply family_wide_wf_from_structural; [| exact Hent | exact Hev].
+  intros v Hv. exact (Hcheck v Hv).
+Qed.
