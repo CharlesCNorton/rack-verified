@@ -994,7 +994,7 @@ Extraction "rack" render_assurance_case render_assurance_case_pretty
                    diagnose_metadata_expiry diagnose_required_keys
                    diagnose_malformed_timestamps
                    check_node check_link
-                   check_identity_entailment check_id_disjoint
+                   check_identity_entailment_fp check_id_disjoint
                    NodeKind_eqb LinkKind_eqb
                    mv_as_string metadata_value_to_json
                    fold_assurance_case fold_nodes_indexed

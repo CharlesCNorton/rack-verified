@@ -460,8 +460,12 @@ Ltac prove_well_formed_with ent_proof ev_proof :=
              ev_proof)
   end.
 
-(* Fully automated well-formedness for concrete cases where
-   vm_compute can solve entailment and evidence validity.              *)
+(* Fully automated well-formedness for concrete cases.
+   Entailment resolution order:
+   1. Typeclass resolution (Entails instances: identity, conj, disj, True)
+   2. Hint database (rack_entail: user-registered domain lemmas)
+   3. vm_compute; tauto / intuition / firstorder
+   4. Fall back to exfalso for non-Goal/Strategy nodes.                  *)
 Ltac prove_well_formed_auto :=
   match goal with
   | |- WellFormed ?ac =>
@@ -478,8 +482,13 @@ Ltac prove_well_formed_auto :=
       | (if ?c then _ else _) = _ =>
           destruct c eqn:?;
           [ injection Hfind as <-;
-            first [ vm_compute; tauto
+            first [ (* typeclass resolution *)
+                    typeclasses eauto
+                  | (* hint database *)
+                    intro; eauto with rack_entail
+                  | vm_compute; tauto
                   | vm_compute; intuition
+                  | vm_compute; firstorder
                   | exfalso; destruct Hkind as [? | ?]; discriminate ]
           | ]
       end;
@@ -979,12 +988,8 @@ Qed.
 (* Section 11: Checker relationship                                    *)
 (* ================================================================== *)
 
-(* All-discharged implies reachable-discharged for found nodes.
-   check_all_discharged checks every node in ac_nodes;
-   check_discharged checks only reachable IDs but may encounter
-   IDs with no corresponding node (returning false).  When all
-   reachable IDs do have nodes (guaranteed by no_dangling for
-   nodes reachable via edges), the all-nodes check is stronger.       *)
+(* check_all_discharged implies the discharged condition for
+   individual nodes.                                                    *)
 Lemma check_all_discharged_node : forall ac n,
     check_all_discharged ac = true ->
     In n ac.(ac_nodes) ->
@@ -2244,7 +2249,9 @@ Ltac prove_well_formed_full :=
       | (if ?c then _ else _) = _ =>
           destruct c eqn:?;
           [ injection Hfind as <-;
-            first [ vm_compute; tauto
+            first [ typeclasses eauto
+                  | intro; eauto with rack_entail
+                  | vm_compute; tauto
                   | vm_compute; intuition
                   | vm_compute; firstorder
                   | exfalso; destruct Hkind as [? | ?]; discriminate ]

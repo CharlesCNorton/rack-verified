@@ -229,26 +229,6 @@ Definition check_acyclic (ac : AssuranceCase) : bool :=
     negb (mem_string n.(node_id) (reachable_from ac n.(node_id))))
     ac.(ac_nodes).
 
-Definition check_discharged (ac : AssuranceCase) : bool :=
-  let reachable := ac.(ac_top) :: reachable_from ac ac.(ac_top) in
-  forallb (fun id =>
-    match find_node ac id with
-    | None => false
-    | Some n =>
-      match n.(node_kind) with
-      | Solution =>
-        match n.(node_evidence) with
-        | Some (Certificate b _ v) => v b
-        | Some (ProofTerm _ _ _ (Some f)) => f tt
-        | Some (ProofTerm _ _ _ None) => false
-        | None => false
-        end
-      | Goal | Strategy =>
-        negb (match supportedby_children ac id with [] => true | _ => false end)
-      | _ => true
-      end
-    end) reachable.
-
 Definition check_context_links (ac : AssuranceCase) : bool :=
   forallb (fun l =>
     match l.(link_kind) with

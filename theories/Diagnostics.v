@@ -29,35 +29,8 @@ Open Scope list_scope.
 (* Identity entailment checker (partial decision procedure)             *)
 (* ------------------------------------------------------------------ *)
 
-(** WARNING: compares [node_claim_text] strings, NOT the underlying
-    [node_claim] Props.  Two nodes with identical claim text but
-    different logical claims will false-positive.  For sound identity
-    checking, use [check_identity_entailment_fp] with a
-    [ClaimFingerprintMap] (defined below).
-    A [true] result means claim TEXTS match — the entailment
-    obligation is trivially dischargeable only if the caller ensures
-    that matching texts imply matching Props.  A [false] result does
-    NOT mean entailment fails. *)
-Definition check_identity_entailment_node (ac : AssuranceCase)
-    (n : Node) : bool :=
-  match n.(node_kind) with
-  | Goal | Strategy =>
-    let kids := supportedby_children ac n.(node_id) in
-    forallb (fun kid =>
-      match find_node ac kid with
-      | Some cn =>
-        (* We can only compare claim_text since node_claim is a Prop *)
-        String.eqb cn.(node_claim_text) n.(node_claim_text)
-      | None => false
-      end) kids
-  | _ => true
-  end.
-
-Definition check_identity_entailment (ac : AssuranceCase) : bool :=
-  forallb (check_identity_entailment_node ac) ac.(ac_nodes).
-
 (* ------------------------------------------------------------------ *)
-(* Sound identity entailment via claim fingerprints                     *)
+(* Identity entailment via claim fingerprints                           *)
 (* ------------------------------------------------------------------ *)
 
 (** A [ClaimFingerprintMap] assigns an opaque fingerprint string to
@@ -590,7 +563,7 @@ Definition diagnose_invalidated_assumptions (ac : AssuranceCase)
 
 (** Diagnostic function that mirrors [structural_checks] exactly.
     Uses [check_all_discharged] (all-nodes) rather than
-    [check_discharged] (reachable-only), and the topo-order
+    [check_all_discharged] (all-nodes), and the topo-order
     acyclicity verifier.  The completeness proof in Reflect.v
     establishes: [diagnose_structural ac = []] ->
     [structural_checks ac = true]. *)
