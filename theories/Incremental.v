@@ -686,6 +686,278 @@ Inductive AVL_balanced : NodeAVL -> Prop :=
       avl_height r <= avl_height l + 1 ->
       AVL_balanced (AVLNode l k v r h).
 
+(* --- avl proof infrastructure --- *)
+
+Lemma string_compare_self_not_lt : forall s, String.compare s s <> Lt.
+Proof. intros s H. rewrite string_compare_refl in H. discriminate. Qed.
+
+Lemma string_compare_self_not_gt : forall s, String.compare s s <> Gt.
+Proof. intros s H. rewrite string_compare_refl in H. discriminate. Qed.
+
+Opaque String.compare.
+
+Lemma avl_find_subtree_lt : forall id n ll lk lv lr lh,
+    avl_find id (AVLNode ll lk lv lr lh) = Some n ->
+    String.compare id lk = Lt ->
+    avl_find id ll = Some n.
+Proof.
+  intros. unfold avl_find in H; fold avl_find in H. rewrite H0 in H. exact H.
+Qed.
+
+Lemma avl_find_subtree_gt : forall id n ll lk lv lr lh,
+    avl_find id (AVLNode ll lk lv lr lh) = Some n ->
+    String.compare id lk = Gt ->
+    avl_find id lr = Some n.
+Proof.
+  intros. unfold avl_find in H; fold avl_find in H. rewrite H0 in H. exact H.
+Qed.
+
+Lemma avl_find_subtree_eq : forall id ll lk lv lr lh,
+    String.compare id lk = Eq ->
+    avl_find id (AVLNode ll lk lv lr lh) = Some lv.
+Proof.
+  intros. unfold avl_find; fold avl_find. rewrite H. reflexivity.
+Qed.
+
+Lemma avl_find_self : forall ll k lv lr lh,
+    avl_find k (AVLNode ll k lv lr lh) = Some lv.
+Proof.
+  intros. unfold avl_find; fold avl_find. rewrite string_compare_refl. reflexivity.
+Qed.
+
+Lemma avl_find_node_some : forall id n l k v r h,
+    avl_find id (AVLNode l k v r h) = Some n ->
+    (avl_find id l = Some n /\ String.compare id k = Lt) \/
+    (id = k /\ n = v) \/
+    (avl_find id r = Some n /\ String.compare id k = Gt).
+Proof.
+  intros. unfold avl_find in H; fold avl_find in H.
+  destruct (String.compare id k) eqn:Ec.
+  - apply String.compare_eq_iff in Ec. subst. right. left. split; [reflexivity|].
+    injection H as <-. reflexivity.
+  - left. split; [exact H | reflexivity].
+  - right. right. split; [exact H | reflexivity].
+Qed.
+
+(* Route a find through a parent to a child subtree *)
+Lemma avl_find_route_right : forall id n ll lk lv lr lh,
+    AVL_ordered (AVLNode ll lk lv lr lh) ->
+    avl_find id lr = Some n ->
+    avl_find id (AVLNode ll lk lv lr lh) = Some n.
+Proof.
+  intros id n ll lk lv lr lh Hord Hf.
+  inversion Hord as [|? ? ? ? ? ? ? ? Hkr_]; subst.
+  unfold avl_find; fold avl_find. rewrite (Hkr_ id n Hf). exact Hf.
+Qed.
+
+Lemma avl_find_route_left : forall id n ll lk lv lr lh,
+    AVL_ordered (AVLNode ll lk lv lr lh) ->
+    avl_find id ll = Some n ->
+    avl_find id (AVLNode ll lk lv lr lh) = Some n.
+Proof.
+  intros id n ll lk lv lr lh Hord Hf.
+  inversion Hord as [|? ? ? ? ? ? ? Hkl_ ?]; subst.
+  unfold avl_find; fold avl_find. rewrite (Hkl_ id n Hf). exact Hf.
+Qed.
+
+(* --- avl_insert_In: inserted pair is in the element list --- *)
+
+Lemma avl_insert_In : forall id n t,
+    In (id, n) (avl_elements (avl_insert id n t)).
+Proof.
+  intros id n t. induction t as [|l IHl k v r IHr h].
+  - unfold avl_insert. rewrite avl_elements_node, avl_elements_leaf. left. reflexivity.
+  - unfold avl_insert; fold avl_insert. destruct (String.compare id k) eqn:Hcmp.
+    + rewrite avl_elements_node. apply in_or_app. right. left. reflexivity.
+    + rewrite avl_balance_elements. apply in_or_app. left. exact IHl.
+    + rewrite avl_balance_elements. apply in_or_app. right. right. exact IHr.
+Qed.
+
+(* --- For ordered trees, In elements => avl_find succeeds --- *)
+
+Lemma avl_find_In_ordered : forall id n t,
+    AVL_ordered t ->
+    In (id, n) (avl_elements t) ->
+    avl_find id t = Some n.
+Proof.
+  intros id n t. induction t as [|l IHl k v r IHr h]; intros Hord Hin.
+  - rewrite avl_elements_leaf in Hin. destruct Hin.
+  - rewrite avl_elements_node in Hin.
+    apply in_app_or in Hin.
+    inversion Hord as [|? ? ? ? ? Hol Hor Hord_kl Hord_kr]; subst.
+    unfold avl_find; fold avl_find.
+    destruct Hin as [Hinl | Hin].
+    + assert (Hfind : avl_find id l = Some n) by exact (IHl Hol Hinl).
+      assert (Hlt : String.compare id k = Lt) by exact (Hord_kl id n Hfind).
+      rewrite Hlt. exact Hfind.
+    + apply in_app_or in Hin. destruct Hin as [Hin | Hinr].
+      * destruct Hin as [Heq | Habs]; [| destruct Habs].
+        injection Heq as <- <-. rewrite string_compare_refl. reflexivity.
+      * assert (Hfind : avl_find id r = Some n) by exact (IHr Hor Hinr).
+        assert (Hgt : String.compare id k = Gt) by exact (Hord_kr id n Hfind).
+        rewrite Hgt. exact Hfind.
+Qed.
+
+(* --- avl_insert_find via element list --- *)
+
+(** [avl_insert] then [avl_find] with the same key returns the value.
+    Requires [AVL_ordered] because rotations change the physical
+    search path.  Proved via [avl_insert_In] + [avl_find_In_ordered]
+    + preservation of ordering through insert. *)
+
+Lemma avl_balance_ordered : forall l k v r,
+    AVL_ordered l -> AVL_ordered r ->
+    (forall id' n', avl_find id' l = Some n' -> String.compare id' k = Lt) ->
+    (forall id' n', avl_find id' r = Some n' -> String.compare id' k = Gt) ->
+    AVL_ordered (avl_balance l k v r).
+Proof.
+  intros l k v r Hol Hor Hkl Hkr.
+  unfold avl_balance.
+  destruct (Nat.leb (avl_height r + 2) (avl_height l)) eqn:E1.
+  - destruct l as [|ll lk lv lr lh].
+    { unfold avl_mk, avl_height. constructor; assumption. }
+    inversion Hol as [|? ? ? ? ? Holl Holr Hlkl Hlkr]; subst.
+    destruct (Nat.leb (avl_height lr) (avl_height ll)) eqn:E2;
+      unfold avl_rot_right, avl_mk.
+    + constructor.
+      * exact Holl.
+      * constructor.
+        -- exact Holr.
+        -- exact Hor.
+        -- intros id' n' Hf.
+           assert (Hfull : avl_find id' (AVLNode ll lk lv lr lh) = Some n').
+           { unfold avl_find; fold avl_find. rewrite (Hlkr id' n' Hf). exact Hf. }
+           exact (Hkl id' n' Hfull).
+        -- exact Hkr.
+      * exact Hlkl.
+      * intros id' n'. unfold avl_find; fold avl_find.
+        destruct (String.compare id' k) eqn:Ec; intro Hf.
+        -- apply String.compare_eq_iff in Ec. subst.
+           injection Hf as <-.
+           assert (Hlk_lt := Hkl lk lv (avl_find_self ll lk lv lr lh)).
+           exact (string_compare_lt_gt lk k Hlk_lt).
+        -- exact (Hlkr id' n' Hf).
+        -- assert (Hlk_lt := Hkl lk lv (avl_find_self ll lk lv lr lh)).
+           exact (string_compare_trans_gt id' k lk (Hkr id' n' Hf)
+                    (string_compare_lt_gt lk k Hlk_lt)).
+    + destruct lr as [|lrl lrk lrv lrr lrh].
+      * assert (Hlk_lt : String.compare lk k = Lt).
+        { exact (Hkl lk lv (avl_find_self ll lk lv AVLLeaf lh)). }
+        constructor.
+        { exact Holl. }
+        { constructor; [exact Holr | exact Hor |
+            intros id' n'; unfold avl_find; fold avl_find; discriminate |
+            exact Hkr]. }
+        { exact Hlkl. }
+        { intros id' n'. unfold avl_find; fold avl_find.
+          destruct (String.compare id' k); intro Hf; discriminate. }
+      * inversion Holr as [|? ? ? ? ? Holrl Holrr Hlrkl Hlrkr]; subst.
+        constructor.
+        -- constructor; [exact Holl | exact Holrl | exact Hlkl |].
+           intros id' n' Hf.
+           apply (Hlkr id' n'). unfold avl_find; fold avl_find.
+           rewrite (Hlrkl id' n' Hf). exact Hf.
+        -- constructor; [exact Holrr | exact Hor | |].
+           ++ intros id' n' Hf.
+              apply (Hkl id' n'). unfold avl_find; fold avl_find.
+              rewrite (Hlkr id' n' ltac:(unfold avl_find; fold avl_find;
+                rewrite (Hlrkr id' n' Hf); exact Hf)).
+              unfold avl_find; fold avl_find.
+              rewrite (Hlrkr id' n' Hf). exact Hf.
+           ++ exact Hkr.
+        -- intros id' n'. unfold avl_find; fold avl_find.
+           destruct (String.compare id' lk) eqn:Ec; intro Hf.
+           ++ apply String.compare_eq_iff in Ec. subst.
+              exact (string_compare_gt_lt lrk lk
+                (Hlkr lrk lrv (avl_find_self lrl lrk lrv lrr lrh))).
+           ++ exact (string_compare_trans_lt id' lk lrk Ec
+                (string_compare_gt_lt lrk lk
+                  (Hlkr lrk lrv (avl_find_self lrl lrk lrv lrr lrh)))).
+           ++ unfold avl_mk in Hf. unfold avl_find in Hf; fold avl_find in Hf.
+              rewrite Ec in Hf. exact (Hlrkl id' n' Hf).
+        -- intros id' n' Hf.
+           destruct (avl_find_node_some id' n' _ _ _ _ _ Hf)
+             as [[Hfl Hcmp] | [[Heq1 Heq2] | [Hfr Hcmp]]].
+           ++ (* id' in lrr: id' > lrk via Hlrkr *)
+              exact (Hlrkr id' n' Hfl).
+           ++ (* id' = k: k > lrk *)
+              subst. apply string_compare_lt_gt.
+              apply (Hkl lrk lrv).
+              exact (avl_find_route_right lrk lrv ll lk lv
+                       (AVLNode lrl lrk lrv lrr lrh) lh Hol
+                       (avl_find_self lrl lrk lrv lrr lrh)).
+           ++ (* id' in r: id' > k > lrk *)
+              assert (Hgt_k := Hkr id' n' Hfr).
+              assert (Hlrk_lt : String.compare lrk k = Lt).
+              { apply (Hkl lrk lrv).
+                exact (avl_find_route_right lrk lrv ll lk lv
+                         (AVLNode lrl lrk lrv lrr lrh) lh Hol
+                         (avl_find_self lrl lrk lrv lrr lrh)). }
+              exact (string_compare_trans_gt id' k lrk Hgt_k
+                       (string_compare_lt_gt lrk k Hlrk_lt)).
+  - destruct (Nat.leb (avl_height l + 2) (avl_height r)) eqn:E3.
+    + destruct r as [|rl rk rv rr rh].
+      { unfold avl_mk, avl_height. constructor; assumption. }
+      inversion Hor as [|? ? ? ? ? Horl Horr Hrkl Hrkr]; subst.
+      destruct (Nat.leb (avl_height rl) (avl_height rr)) eqn:E4;
+        unfold avl_rot_left, avl_mk.
+      * constructor; [constructor; [exact Hol | exact Horl | exact Hkl |] | exact Horr | |].
+        -- intros id' n' Hf.
+           exact (Hkr id' n' (avl_find_route_left id' n' rl rk rv rr rh Hor Hf)).
+        -- intros id' n' Hf.
+           destruct (avl_find_node_some id' n' _ _ _ _ _ Hf)
+             as [[Hfl Hcmp] | [[Heq1 Heq2] | [Hfr Hcmp]]].
+           ++ exact (string_compare_trans_lt id' k rk (Hkl id' n' Hfl)
+                       (string_compare_gt_lt rk k
+                         (Hkr rk rv (avl_find_self rl rk rv rr rh)))).
+           ++ subst. exact (string_compare_gt_lt rk k
+                       (Hkr rk rv (avl_find_self rl rk rv rr rh))).
+           ++ exact (Hrkl id' n' Hfr).
+        -- exact Hrkr.
+      * destruct rl as [|rll rlk rlv rlr rlh].
+        -- constructor.
+           { constructor; [exact Hol | exact Horl | exact Hkl |].
+             intros id' n'. unfold avl_find; fold avl_find. discriminate. }
+           { exact Horr. }
+           { intros id' n'. unfold avl_find; fold avl_find. discriminate. }
+           { exact Hrkr. }
+        -- inversion Horl as [|? ? ? ? ? Horll Horlr Hrlkl Hrlkr]; subst.
+           constructor.
+           ++ constructor; [exact Hol | exact Horll | exact Hkl |].
+              intros id' n' Hf.
+              exact (Hkr id' n'
+                (avl_find_route_left id' n' _ rk rv _ rh Hor
+                  (avl_find_route_left id' n' rll rlk rlv rlr rlh Horl Hf))).
+           ++ constructor; [exact Horlr | exact Horr | |].
+              ** intros id' n' Hf.
+                 exact (Hrkl id' n'
+                   (avl_find_route_right id' n' rll rlk rlv rlr rlh Horl Hf)).
+              ** exact Hrkr.
+           ++ intros id' n' Hf.
+              destruct (avl_find_node_some id' n' _ _ _ _ _ Hf)
+                as [[Hfl Hcmp] | [[Heq1 Heq2] | [Hfr Hcmp]]].
+              ** exact (string_compare_trans_lt id' k rlk (Hkl id' n' Hfl)
+                   (string_compare_gt_lt rlk k
+                     (Hkr rlk rlv
+                       (avl_find_route_left rlk rlv _ rk rv _ rh Hor
+                         (avl_find_self rll rlk rlv rlr rlh))))).
+              ** subst. exact (string_compare_gt_lt rlk k
+                   (Hkr rlk rlv
+                     (avl_find_route_left rlk rlv _ rk rv _ rh Hor
+                       (avl_find_self rll rlk rlv rlr rlh)))).
+              ** exact (Hrlkl id' n' Hfr).
+           ++ intros id' n' Hf.
+              destruct (avl_find_node_some id' n' _ _ _ _ _ Hf)
+                as [[Hfl Hcmp] | [[Heq1 Heq2] | [Hfr Hcmp]]].
+              ** exact (Hrlkr id' n' Hfl).
+              ** subst. exact (string_compare_lt_gt rlk rk
+                   (Hrkl rlk rlv (avl_find_self rll rlk rlv rlr rlh))).
+              ** exact (string_compare_trans_gt id' rk rlk (Hrkr id' n' Hfr)
+                   (string_compare_lt_gt rlk rk
+                     (Hrkl rlk rlv (avl_find_self rll rlk rlv rlr rlh)))).
+    + unfold avl_mk, avl_height. constructor; assumption.
+Qed.
+
 (* --- Boolean refinement check (concrete cases) --- *)
 
 Definition check_avl_refines (ac : AssuranceCase) : bool :=
