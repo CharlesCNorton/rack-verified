@@ -1094,6 +1094,66 @@ Proof.
 Qed.
 
 (* ================================================================== *)
+(* JStr render/parse roundtrip                                         *)
+(* ================================================================== *)
+
+Lemma dquote_not_whitespace :
+    is_whitespace_char dquote_char = false.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma dquote_is_34 :
+    is_char_code dquote_char 34 = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma skip_whitespace_non_ws : forall c rest,
+    is_whitespace_char c = false ->
+    skip_whitespace (String c rest) = String c rest.
+Proof. intros c rest H. simpl. rewrite H. reflexivity. Qed.
+
+Lemma string_append_assoc : forall s1 s2 s3,
+    String.append (String.append s1 s2) s3 =
+    String.append s1 (String.append s2 s3).
+Proof.
+  induction s1 as [|c s1' IH]; intros s2 s3; simpl.
+  - reflexivity.
+  - f_equal. exact (IH s2 s3).
+Qed.
+
+Lemma json_quote_unfold : forall s rest,
+    String.append (json_quote s) rest =
+    String dquote_char
+      (String.append (escape_json_chars s) (String dquote_char rest)).
+Proof.
+  intros s rest. unfold json_quote, dquote.
+  simpl. rewrite string_append_assoc. reflexivity.
+Qed.
+
+Lemma parse_json_go_string_dispatch : forall f body,
+    parse_json_go (S f) (String dquote_char body) =
+    match parse_string_chars f body EmptyString with
+    | Some (str, rest') => Some (JStr str, rest')
+    | None => None
+    end.
+Proof. intros. reflexivity. Qed.
+
+Theorem render_parse_json_string : forall s rest f,
+    f >= S (string_length s) ->
+    parse_json_go (S f)
+      (String.append (render_json (JStr s)) rest) =
+    Some (JStr s, rest).
+Proof.
+  intros s rest f Hf.
+  change (render_json (JStr s)) with (json_quote s).
+  rewrite json_quote_unfold.
+  rewrite parse_json_go_string_dispatch.
+  pose proof (escape_unescape_roundtrip s rest) as Heu.
+  rewrite (parse_string_chars_mono (S (string_length s))
+             (String.append (escape_json_chars s) (String dquote_char rest))
+             EmptyString (s, rest) Heu f Hf).
+  reflexivity.
+Qed.
+
+(* ================================================================== *)
 (* Full AST render/parse roundtrip                                     *)
 (* ================================================================== *)
 
