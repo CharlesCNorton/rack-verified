@@ -238,7 +238,7 @@ Fixpoint check_support_tree_go (ac : AssuranceCase) (fuel : nat)
       match n.(node_kind) with
       | Solution =>
         match n.(node_evidence) with
-        | Some (ProofTerm _ _ _ (Some f)) => f tt
+        | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text)
         | Some (ProofTerm _ _ _ None) => false
         | Some (Certificate b _ v) => v b
         | None => false
@@ -354,7 +354,7 @@ Fixpoint compute_support_witness_go (ac : AssuranceCase) (fuel : nat)
         match n.(node_evidence) with
         | Some e =>
           let valid := match e with
-            | ProofTerm _ _ _ (Some f) => f tt
+            | ProofTerm _ _ _ (Some f) => f n.(node_claim_text)
             | ProofTerm _ _ _ None => false
             | Certificate b _ v => v b
             end in
@@ -451,7 +451,7 @@ Definition diagnose_discharged (ac : AssuranceCase) : list CheckError :=
       match n.(node_evidence) with
       | None => [ErrMissingEvidence n.(node_id)]
       | Some (ProofTerm _ _ _ (Some f)) =>
-        if f tt then [] else [ErrInvalidEvidence n.(node_id)]
+        if f n.(node_claim_text) then [] else [ErrInvalidEvidence n.(node_id)]
       | Some (ProofTerm _ _ _ None) =>
         [ErrInvalidEvidence n.(node_id)]
       | Some (Certificate b _ v) =>
@@ -583,7 +583,7 @@ Definition diagnose_structural (ac : AssuranceCase) : list CheckError :=
       match n.(node_evidence) with
       | None => [ErrMissingEvidence n.(node_id)]
       | Some (ProofTerm _ _ _ (Some f)) =>
-        if f tt then [] else [ErrInvalidEvidence n.(node_id)]
+        if f n.(node_claim_text) then [] else [ErrInvalidEvidence n.(node_id)]
       | Some (ProofTerm _ _ _ None) =>
         [ErrInvalidEvidence n.(node_id)]
       | Some (Certificate b _ v) =>
@@ -660,7 +660,7 @@ Definition check_node (ac : AssuranceCase) (id : Id) : bool :=
     match n.(node_kind) with
     | Solution =>
       match n.(node_evidence) with
-      | Some (ProofTerm _ _ _ (Some f)) => f tt
+      | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text)
       | Some (ProofTerm _ _ _ None) => false
       | Some (Certificate b _ v) => v b
       | None => false
@@ -698,7 +698,7 @@ Definition diagnose_node (ac : AssuranceCase) (id : Id)
       match n.(node_evidence) with
       | None => [ErrMissingEvidence id]
       | Some (ProofTerm _ _ _ (Some f)) =>
-        if f tt then [] else [ErrInvalidEvidence id]
+        if f n.(node_claim_text) then [] else [ErrInvalidEvidence id]
       | Some (ProofTerm _ _ _ None) =>
         [ErrInvalidEvidence id]
       | Some (Certificate b _ v) =>

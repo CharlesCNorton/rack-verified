@@ -68,9 +68,10 @@ Definition mk_proof_identity (name mod_name hash : string)
     proof evidence with identity tracking. *)
 Definition mk_identified_evidence (name mod_name hash : string)
     (P : Prop) (pf : P)
-    (check : option (unit -> bool)) : Evidence * ProofId :=
-  (ProofTerm name P pf check,
-   mk_proof_identity name mod_name hash P pf check).
+    (ev_check : option (string -> bool))
+    (pi_check : option (unit -> bool)) : Evidence * ProofId :=
+  (ProofTerm name P pf ev_check,
+   mk_proof_identity name mod_name hash P pf pi_check).
 
 (* ================================================================== *)
 (* Identity-based evidence validation                                  *)
@@ -261,9 +262,10 @@ Definition mk_typed_proof_identity (name mod_name : string)
     refer to the same proof.  Hash is auto-computed. *)
 Definition mk_typed_identified_evidence (name mod_name : string)
     (P : Prop) (pf : P)
-    (check : option (unit -> bool)) : Evidence * TypedProofId P :=
-  (ProofTerm name P pf check,
-   mk_typed_proof_identity name mod_name P pf check).
+    (ev_check : option (string -> bool))
+    (pi_check : option (unit -> bool)) : Evidence * TypedProofId P :=
+  (ProofTerm name P pf ev_check,
+   mk_typed_proof_identity name mod_name P pf pi_check).
 
 (** Tactic: build a [TypedProofId] after verifying [pf : P].
     Refuses mismatches at elaboration time. *)
@@ -280,13 +282,14 @@ Ltac ground_identified_evidence name mod_name P pf check :=
 
 (** A [TypedProofId P] validates against any registry that
     contains its theorem name. *)
-Lemma typed_proof_id_validates : forall P (tpi : TypedProofId P) reg,
+Lemma typed_proof_id_validates : forall P (tpi : TypedProofId P) reg
+    (ev_check : option (string -> bool)),
     find_proof_id tpi.(tpi_base).(pi_theorem_name) reg <> None ->
     validate_proof_identity
       (ProofTerm tpi.(tpi_base).(pi_theorem_name) P tpi.(tpi_proof)
-        tpi.(tpi_base).(pi_runtime_check)) reg = true.
+        ev_check) reg = true.
 Proof.
-  intros P tpi reg H. unfold validate_proof_identity.
+  intros P tpi reg ev_check H. unfold validate_proof_identity.
   destruct (find_proof_id tpi.(tpi_base).(pi_theorem_name) reg);
     [reflexivity | contradiction].
 Qed.

@@ -257,7 +257,7 @@ Definition check_all_discharged (ac : AssuranceCase) : bool :=
     | Solution =>
       match n.(node_evidence) with
       | Some (Certificate b _ v) => v b
-      | Some (ProofTerm _ _ _ (Some f)) => f tt
+      | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text)
       | Some (ProofTerm _ _ _ None) => false
       | None => false
       end

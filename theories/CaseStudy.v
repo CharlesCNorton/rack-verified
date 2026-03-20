@@ -72,7 +72,7 @@ Definition cs_assumption : Node :=
 (* Formal proof evidence *)
 Definition cs_sol_proof : Node :=
   mkSolution "CS-proof" "Rocq proof: allocation always succeeds for n > 0"
-    (proof_evidence "alloc_safety" alloc_safety_claim alloc_safety_proof)
+    (proof_evidence "alloc_safety" "Rocq proof: allocation always succeeds for n > 0" alloc_safety_claim alloc_safety_proof)
     [md_string "tool" "Rocq"]
     alloc_safety_claim.
 
@@ -161,7 +161,7 @@ Example cs_diagnose_empty :
 
 Example cs_proof_class :
   classify_evidence
-    (proof_evidence "alloc_safety" alloc_safety_claim alloc_safety_proof)
+    (proof_evidence "alloc_safety" "alloc" alloc_safety_claim alloc_safety_proof)
   = ECTheorem := eq_refl.
 
 Example cs_cbmc_class :

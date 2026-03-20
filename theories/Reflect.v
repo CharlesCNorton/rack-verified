@@ -785,7 +785,7 @@ Inductive ComputationalSupportTree (ac : AssuranceCase) : Id -> Prop :=
       find_node ac id = Some n ->
       n.(node_kind) = Solution ->
       (match n.(node_evidence) with
-       | Some (ProofTerm _ _ _ (Some f)) => f tt = true
+       | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text) = true
        | Some (ProofTerm _ _ _ None) => False
        | Some (Certificate b _ v) => v b = true
        | None => False
@@ -997,7 +997,7 @@ Lemma check_all_discharged_node : forall ac n,
     | Solution =>
       match n.(node_evidence) with
       | Some (Certificate b _ v) => v b = true
-      | Some (ProofTerm _ _ _ (Some f)) => f tt = true
+      | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text) = true
       | Some (ProofTerm _ _ _ None) => False
       | None => False
       end
@@ -1546,7 +1546,7 @@ Lemma check_stg_by_height : forall ac h id,
     (forall n, In n ac.(ac_nodes) ->
       n.(node_kind) = Solution ->
       match n.(node_evidence) with
-      | Some (ProofTerm _ _ _ (Some f)) => f tt = true
+      | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text) = true
       | Some (ProofTerm _ _ _ None) => False
       | Some (Certificate b _ v) => v b = true
       | None => False
@@ -1615,7 +1615,7 @@ Theorem check_support_tree_complete : forall ac,
     (forall n, In n ac.(ac_nodes) ->
       n.(node_kind) = Solution ->
       match n.(node_evidence) with
-      | Some (ProofTerm _ _ _ (Some f)) => f tt = true
+      | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text) = true
       | Some (ProofTerm _ _ _ None) => False
       | Some (Certificate b _ v) => v b = true
       | None => False
@@ -1674,7 +1674,7 @@ Lemma diagnose_discharged_all_nil_check : forall ac,
         match n.(node_evidence) with
         | None => [ErrMissingEvidence n.(node_id)]
         | Some (ProofTerm _ _ _ (Some f)) =>
-          if f tt then [] else [ErrInvalidEvidence n.(node_id)]
+          if f n.(node_claim_text) then [] else [ErrInvalidEvidence n.(node_id)]
         | Some (ProofTerm _ _ _ None) =>
           [ErrInvalidEvidence n.(node_id)]
         | Some (Certificate b _ v) =>
@@ -1697,8 +1697,8 @@ Proof.
       try discriminate.
     + (* ProofTerm *)
       destruct chk as [f|].
-      * (* Some f: Hn says if f tt then [] else [...] = [] *)
-        destruct (f tt) eqn:Ef.
+      * (* Some f: Hn says if f n.(node_claim_text) then [] else [...] = [] *)
+        destruct (f n.(node_claim_text)) eqn:Ef.
         -- reflexivity.
         -- exfalso. exact (nil_cons (eq_sym Hn)).
       * (* None: Hn says [...] = [] *)
@@ -2271,7 +2271,7 @@ Lemma check_all_discharged_complete : forall ac,
       | Solution =>
         match n.(node_evidence) with
         | Some (Certificate b _ v) => v b = true
-        | Some (ProofTerm _ _ _ (Some f)) => f tt = true
+        | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text) = true
         | Some (ProofTerm _ _ _ None) => False
         | None => False
         end

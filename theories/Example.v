@@ -460,7 +460,7 @@ Example mt_struct_check : structural_checks mt_ac = true := eq_refl.
 
 (* Runtime re-check survives extraction *)
 Example mt_cbmc_runtime :
-  evidence_runtime_check
+  evidence_runtime_check ""
     (Certificate "CBMC:all_assertions_hold:v5.95:2026-03-18" "CBMC" cbmc_verify)
   = true := eq_refl.
 
@@ -477,7 +477,7 @@ Example mt_tool_id :
    without the erased proof witness.                                   *)
 Definition rt_claim : Prop := 3 + 3 = 6.
 Definition rt_proof : rt_claim := eq_refl.
-Definition rt_check (_ : unit) : bool := Nat.eqb (3 + 3) 6.
+Definition rt_check (_ : string) : bool := Nat.eqb (3 + 3) 6.
 
 Definition rt_goal : Node := {|
   node_id := "G-rt";
@@ -508,15 +508,15 @@ Proof. prove_well_formed_full. Qed.
 
 (* Runtime check works after extraction *)
 Example rt_runtime_check :
-  evidence_runtime_check
+  evidence_runtime_check "3 + 3 = 6 (proof + runtime check)"
     (ProofTerm "rt_claim" rt_claim rt_proof (Some rt_check))
   = true := eq_refl.
 
-(* Without runtime checker, evidence_runtime_check returns true
-   (trusts the type system) *)
-Example rt_no_runtime_check :
-  evidence_runtime_check
-    (ProofTerm "rt_claim" rt_claim rt_proof (Some (fun _ => true)))
+(* Claim-text binding check *)
+Example rt_claim_text_check :
+  evidence_runtime_check "3 + 3 = 6 (proof + runtime check)"
+    (ProofTerm "rt_claim" rt_claim rt_proof
+      (Some (fun ct => String.eqb ct "3 + 3 = 6 (proof + runtime check)")))
   = true := eq_refl.
 
 (* ================================================================== *)

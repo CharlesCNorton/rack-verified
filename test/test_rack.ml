@@ -89,13 +89,13 @@ let () =
   (* evidence_runtime_check *)
   Printf.printf "\n[evidence_runtime_check]\n";
   assert_coq_true "ProofTerm None -> true"
-    (evidence_runtime_check (ProofTerm (coq_of_string "x", None)));
+    (evidence_runtime_check (coq_of_string "") (ProofTerm (coq_of_string "x", None)));
   assert_coq_true "ProofTerm Some -> calls thunk"
-    (evidence_runtime_check (ProofTerm (coq_of_string "x",
+    (evidence_runtime_check (coq_of_string "") (ProofTerm (coq_of_string "x",
       Some (fun _ -> True))));
   let v = fun s -> if s = coq_of_string "ok" then True else False in
   assert_coq_true "Certificate valid"
-    (evidence_runtime_check (Certificate (coq_of_string "ok",
+    (evidence_runtime_check (coq_of_string "") (Certificate (coq_of_string "ok",
       coq_of_string "test-tool", v)));
 
   (* evidence_tool *)
@@ -235,7 +235,7 @@ let () =
     coq_of_string "CBMC",
     Rack_util.make_keyed_validator secret) in
   assert_coq_true "keyed cert runtime check"
-    (evidence_runtime_check keyed_cert);
+    (evidence_runtime_check (coq_of_string "") keyed_cert);
   assert_true "keyed cert tool is CBMC"
     (string_of_coq (evidence_tool keyed_cert) = "CBMC");
 

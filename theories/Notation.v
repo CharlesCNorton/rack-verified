@@ -104,16 +104,18 @@ Definition defeats (from to_ : Id) : Link := {|
 (* Evidence builders                                                   *)
 (* ------------------------------------------------------------------ *)
 
-(** Build a [ProofTerm] evidence from a label and proof.
-    Includes a trivial runtime re-checker [(fun _ => true)] so
-    the evidence passes [check_all_discharged].  For a real
-    re-checker, use [proof_evidence_rt]. *)
-Definition proof_evidence (label : string) (P : Prop) (pf : P) : Evidence :=
-  ProofTerm label P pf (Some (fun _ => true)).
+(** Build a [ProofTerm] evidence from a label, claim text, and proof.
+    The embedded re-checker verifies at runtime that the evidence is
+    still bound to a node whose [node_claim_text] matches [claim_text].
+    For a custom re-checker, use [proof_evidence_rt]. *)
+Definition proof_evidence (label claim_text : string)
+    (P : Prop) (pf : P) : Evidence :=
+  ProofTerm label P pf (Some (fun ct => String.eqb ct claim_text)).
 
-(** Build a [ProofTerm] with a runtime re-checker thunk. *)
+(** Build a [ProofTerm] with a custom runtime re-checker.  The checker
+    receives the node's [node_claim_text] at check time. *)
 Definition proof_evidence_rt (label : string) (P : Prop) (pf : P)
-    (check : unit -> bool) : Evidence :=
+    (check : string -> bool) : Evidence :=
   ProofTerm label P pf (Some check).
 
 (** Build a [Certificate] evidence from blob, tool, and validator. *)
@@ -163,14 +165,15 @@ Definition mkSolutionProved (id : Id) (text label : string)
   node_id         := id;
   node_kind       := Solution;
   node_claim_text := text;
-  node_evidence   := Some (ProofTerm label P pf (Some (fun _ => true)));
+  node_evidence   := Some (ProofTerm label P pf
+                      (Some (fun ct => String.eqb ct text)));
   node_metadata   := md;
   node_claim      := P;
 |}.
 
-(** Variant with a runtime re-checker. *)
+(** Variant with a custom runtime re-checker. *)
 Definition mkSolutionProvedRT (id : Id) (text label : string)
-    (P : Prop) (pf : P) (check : unit -> bool)
+    (P : Prop) (pf : P) (check : string -> bool)
     (md : list (string * MetadataValue)) : Node := {|
   node_id         := id;
   node_kind       := Solution;
@@ -183,5 +186,5 @@ Definition mkSolutionProvedRT (id : Id) (text label : string)
 (** [evidence_valid] holds by construction for [mkSolutionProved]. *)
 Lemma mkSolutionProved_valid : forall id text label P pf md,
     evidence_valid (mkSolutionProved id text label P pf md)
-      (ProofTerm label P pf (Some (fun _ => true))).
+      (ProofTerm label P pf (Some (fun ct => String.eqb ct text))).
 Proof. intros. reflexivity. Qed.

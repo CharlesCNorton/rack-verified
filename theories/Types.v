@@ -56,9 +56,10 @@ Proof. decide equality. Defined.
 Inductive Evidence : Type :=
   (* A Rocq proof term whose type IS the node's claim.
      The string label survives extraction, identifying what was proved.
-     The optional (unit -> bool) is a runtime re-checker that survives
-     extraction — call it to re-verify validity without the erased proof. *)
-  | ProofTerm  : string -> forall (P : Prop), P -> option (unit -> bool) -> Evidence
+     The optional (string -> bool) is a runtime re-checker that survives
+     extraction — it receives the node's claim_text at check time and
+     returns true when the evidence is still bound to the correct node. *)
+  | ProofTerm  : string -> forall (P : Prop), P -> option (string -> bool) -> Evidence
   (* External certificate: raw blob, tool identifier, decidable validator.
      tool_id names the originating tool (e.g. "SAW", "CBMC", "fuzz")
      so the extracted code can dispatch to the right FFI validator.       *)

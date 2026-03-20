@@ -103,13 +103,15 @@ Definition evidence_label (e : Evidence) : string :=
   | Certificate blob _ _ => blob
   end.
 
-(* Runtime re-check: call the optional thunk if present.
+(* Runtime re-check: call the optional re-checker if present.
+   For ProofTerm, [claim_text] is the node's claim text — the re-checker
+   verifies that the evidence is still bound to the correct node.
    Returns true for ProofTerm without a runtime checker (trust the type
    system), true for Certificate if the validator passes, false otherwise.
    Survives extraction — use this in CI gates and audit tooling.           *)
-Definition evidence_runtime_check (e : Evidence) : bool :=
+Definition evidence_runtime_check (claim_text : string) (e : Evidence) : bool :=
   match e with
-  | ProofTerm _ _ _ (Some f) => f tt
+  | ProofTerm _ _ _ (Some f) => f claim_text
   | ProofTerm _ _ _ None     => true
   | Certificate b _ v        => v b
   end.
@@ -223,8 +225,8 @@ Defined.
 
 (** Boolean evidence validity check agrees with [evidence_valid]
     for [Certificate] evidence. *)
-Lemma evidence_runtime_check_certificate : forall n b tool v,
-    evidence_runtime_check (Certificate b tool v) = true <->
+Lemma evidence_runtime_check_certificate : forall claim_text n b tool v,
+    evidence_runtime_check claim_text (Certificate b tool v) = true <->
     evidence_valid n (Certificate b tool v).
 Proof.
   intros. unfold evidence_runtime_check, evidence_valid. split; exact (fun H => H).

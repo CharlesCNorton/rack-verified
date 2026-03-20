@@ -109,7 +109,7 @@ Definition iac_check_node (iac : IndexedAC) (id : Id) : bool :=
     match n.(node_kind) with
     | Solution =>
       match n.(node_evidence) with
-      | Some (ProofTerm _ _ _ (Some f)) => f tt
+      | Some (ProofTerm _ _ _ (Some f)) => f n.(node_claim_text)
       | Some (ProofTerm _ _ _ None) => false
       | Some (Certificate b _ v) => v b
       | None => false
