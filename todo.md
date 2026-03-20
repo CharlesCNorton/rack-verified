@@ -4,7 +4,7 @@
 
 1. Prove `project_variant` preserves `WellFormed` when the family-wide `ProductLineCase` is well-formed and the variant is valid under the feature model
 2. Connect a real VST `semax_body` proof through the DeepSpec bridge as `ProofTerm` evidence with a complete `WellFormed` + `SupportTree` witness
-3. Promote `VSTBridge.v` and `ITreeBridge.v` from thin stubs to full modules that carry end-to-end `WellFormed` + `SupportTree` witnesses, eliminating the split between the main build and the `deepspec/` directory
+3. Add `WellFormed` + `SupportTree` witnesses to deepspec/ files (VSTBridge cases use `prove_well_formed_auto`; requires `make deepspec` with VST/CompCert/ITree Docker image)
 
 ## Nice to have
 
