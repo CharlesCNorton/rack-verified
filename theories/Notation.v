@@ -147,3 +147,41 @@ Definition md_bool (k : string) (v : bool) : string * MetadataValue :=
 
 Definition md_timestamp (k v : string) : string * MetadataValue :=
   (k, MVTimestamp v).
+
+(* ------------------------------------------------------------------ *)
+(* Type-safe evidence attachment                                       *)
+(* ------------------------------------------------------------------ *)
+
+(** [mkSolutionProved] builds a Solution node where the evidence
+    Prop and the node claim are the SAME type parameter [P].
+    This makes it impossible to attach a proof of the wrong claim.
+    The type checker rejects any call where [pf] does not inhabit
+    the same [P] used as [node_claim]. *)
+Definition mkSolutionProved (id : Id) (text label : string)
+    (P : Prop) (pf : P)
+    (md : list (string * MetadataValue)) : Node := {|
+  node_id         := id;
+  node_kind       := Solution;
+  node_claim_text := text;
+  node_evidence   := Some (ProofTerm label P pf (Some (fun _ => true)));
+  node_metadata   := md;
+  node_claim      := P;
+|}.
+
+(** Variant with a runtime re-checker. *)
+Definition mkSolutionProvedRT (id : Id) (text label : string)
+    (P : Prop) (pf : P) (check : unit -> bool)
+    (md : list (string * MetadataValue)) : Node := {|
+  node_id         := id;
+  node_kind       := Solution;
+  node_claim_text := text;
+  node_evidence   := Some (ProofTerm label P pf (Some check));
+  node_metadata   := md;
+  node_claim      := P;
+|}.
+
+(** [evidence_valid] holds by construction for [mkSolutionProved]. *)
+Lemma mkSolutionProved_valid : forall id text label P pf md,
+    evidence_valid (mkSolutionProved id text label P pf md)
+      (ProofTerm label P pf (Some (fun _ => true))).
+Proof. intros. reflexivity. Qed.

@@ -1013,4 +1013,5 @@ Extraction "rack" render_assurance_case render_assurance_case_pretty
                    delta_affected_nodes delta_preserved_nodes
                    delta_revalidation_needed
                    invalidate_requirement invalidate_commit
-                   check_trace_total check_trace_provenance.
+                   check_trace_total check_trace_provenance
+                   structural_checks_fast build_bst_index.

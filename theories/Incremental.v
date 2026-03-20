@@ -699,3 +699,98 @@ Definition check_avl_refines (ac : AssuranceCase) : bool :=
     | None, None => true
     | _, _ => false
     end) ac.(ac_nodes).
+
+(* ================================================================== *)
+(* BST-indexed structural_checks                                       *)
+(* ================================================================== *)
+
+(** [structural_checks] with O(log n) node lookups via BST.
+    Precomputes the BST once and substitutes [find_node_bst] for
+    [find_node] in [check_top_is_goal], [check_no_dangling], and
+    [check_context_links].  [check_unique_ids], [verify_topo_order],
+    and [check_all_discharged] do not call [find_node] so they are
+    unchanged. *)
+
+Definition check_top_is_goal_bst (ac : AssuranceCase)
+    (t : NodeBST) : bool :=
+  match find_node_bst t ac.(ac_top) with
+  | Some n => match n.(node_kind) with Goal => true | _ => false end
+  | None => false
+  end.
+
+Definition check_no_dangling_bst (ac : AssuranceCase)
+    (t : NodeBST) : bool :=
+  forallb (fun l =>
+    match find_node_bst t l.(link_from),
+          find_node_bst t l.(link_to) with
+    | Some _, Some _ => true
+    | _, _ => false
+    end) ac.(ac_links).
+
+Definition check_context_links_bst (ac : AssuranceCase)
+    (t : NodeBST) : bool :=
+  forallb (fun l =>
+    match l.(link_kind) with
+    | SupportedBy => true
+    | InContextOf =>
+      match find_node_bst t l.(link_from),
+            find_node_bst t l.(link_to) with
+      | Some nf, Some nt =>
+        (match nf.(node_kind) with Goal | Strategy => true | _ => false end) &&
+        (match nt.(node_kind) with
+         | Context | Assumption | Justification => true | _ => false end)
+      | _, _ => false
+      end
+    | Defeater =>
+      match find_node_bst t l.(link_to) with
+      | Some nt =>
+        match nt.(node_kind) with Goal | Strategy => true | _ => false end
+      | None => false
+      end
+    end) ac.(ac_links).
+
+Definition structural_checks_fast (ac : AssuranceCase) : bool :=
+  let t := build_bst_index ac in
+  check_top_is_goal_bst ac t &&
+  check_unique_ids ac &&
+  check_no_dangling_bst ac t &&
+  verify_topo_order ac (topo_sort ac) &&
+  check_all_discharged ac &&
+  check_context_links_bst ac t.
+
+Lemma forallb_ext_local : forall {A : Type} (f g : A -> bool) (l : list A),
+    (forall x, f x = g x) -> forallb f l = forallb g l.
+Proof.
+  intros A f g l H. induction l as [|a l' IH]; simpl.
+  - reflexivity.
+  - rewrite (H a), IH. reflexivity.
+Qed.
+
+(** [structural_checks_fast] agrees with [structural_checks]
+    when node IDs are unique (required by BST correctness). *)
+Theorem structural_checks_fast_correct : forall ac,
+    NoDup (map node_id ac.(ac_nodes)) ->
+    structural_checks_fast ac = structural_checks ac.
+Proof.
+  intros ac Hnd.
+  unfold structural_checks_fast, structural_checks.
+  pose proof (build_bst_index_correct ac) as Hbst.
+  assert (Htop : check_top_is_goal_bst ac (build_bst_index ac) =
+                 check_top_is_goal ac).
+  { unfold check_top_is_goal_bst, check_top_is_goal.
+    rewrite (Hbst ac.(ac_top) Hnd). reflexivity. }
+  assert (Hndl : check_no_dangling_bst ac (build_bst_index ac) =
+                  check_no_dangling ac).
+  { unfold check_no_dangling_bst, check_no_dangling.
+    apply forallb_ext_local. intro l.
+    rewrite (Hbst l.(link_from) Hnd), (Hbst l.(link_to) Hnd).
+    reflexivity. }
+  assert (Hctx : check_context_links_bst ac (build_bst_index ac) =
+                  check_context_links ac).
+  { unfold check_context_links_bst, check_context_links.
+    apply forallb_ext_local. intro l.
+    destruct l.(link_kind);
+      try (rewrite ?(Hbst l.(link_from) Hnd), ?(Hbst l.(link_to) Hnd));
+      reflexivity. }
+  rewrite Htop, Hndl, Hctx. reflexivity.
+Qed.

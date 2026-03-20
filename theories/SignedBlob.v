@@ -103,3 +103,166 @@ Definition signed_to_json (sb : SignedBlob) : Json :=
   JObj [("type", JStr "SignedBlob");
         ("payload", JStr sb.(sb_payload));
         ("signature", JStr sb.(sb_signature))].
+
+(* ================================================================== *)
+(* Replay-protected signed blobs                                       *)
+(* ================================================================== *)
+
+(** [ReplayProtectedBlob] extends [SignedBlob] with a nonce and
+    sequence number.  The verifier checks all four fields: payload,
+    signature, nonce, and sequence.  Replay is detectable by checking
+    that the sequence number has not been seen before (tracked by
+    the caller) or that the nonce is unique. *)
+Record ReplayProtectedBlob : Type := {
+  rpb_payload   : string;
+  rpb_signature : string;
+  rpb_nonce     : string;   (* random, unique per signing event *)
+  rpb_sequence  : nat;      (* monotonically increasing counter *)
+  rpb_verify    : string -> string -> string -> nat -> bool;
+}.
+
+Definition rpb_valid (rpb : ReplayProtectedBlob) : Prop :=
+  rpb.(rpb_verify) rpb.(rpb_payload) rpb.(rpb_signature)
+                    rpb.(rpb_nonce) rpb.(rpb_sequence) = true.
+
+Definition rpb_to_signed (rpb : ReplayProtectedBlob) : SignedBlob := {|
+  sb_payload   := rpb.(rpb_payload);
+  sb_signature := rpb.(rpb_signature);
+  sb_verify    := fun p s =>
+    rpb.(rpb_verify) p s rpb.(rpb_nonce) rpb.(rpb_sequence);
+|}.
+
+Lemma rpb_valid_implies_signed : forall rpb,
+    rpb_valid rpb -> signed_blob_valid (rpb_to_signed rpb).
+Proof. intros rpb H. exact H. Qed.
+
+Definition rpb_to_evidence (rpb : ReplayProtectedBlob) : Evidence :=
+  signed_to_evidence (rpb_to_signed rpb).
+
+(** Two replay-protected blobs are distinct when their nonces
+    or sequence numbers differ. *)
+Definition rpb_distinct (a b : ReplayProtectedBlob) : bool :=
+  negb (String.eqb a.(rpb_nonce) b.(rpb_nonce)) ||
+  negb (Nat.eqb a.(rpb_sequence) b.(rpb_sequence)).
+
+Definition rpb_to_json (rpb : ReplayProtectedBlob) : Json :=
+  JObj [("type", JStr "ReplayProtectedBlob");
+        ("payload", JStr rpb.(rpb_payload));
+        ("signature", JStr rpb.(rpb_signature));
+        ("nonce", JStr rpb.(rpb_nonce));
+        ("sequence", JNum rpb.(rpb_sequence))].
+
+(* ================================================================== *)
+(* Keyed blob with replay protection                                   *)
+(* ================================================================== *)
+
+(** [KeyedReplayBlob] combines keyed verification with replay fields. *)
+Record KeyedReplayBlob : Type := {
+  krb_payload   : string;
+  krb_signature : string;
+  krb_key_id    : string;
+  krb_nonce     : string;
+  krb_sequence  : nat;
+  krb_verify    : string -> string -> bool;
+}.
+
+Definition krb_valid (krb : KeyedReplayBlob) : Prop :=
+  krb.(krb_verify) krb.(krb_payload) krb.(krb_signature) = true.
+
+Definition krb_to_keyed (krb : KeyedReplayBlob) : KeyedSignedBlob := {|
+  ksb_payload   := krb.(krb_payload);
+  ksb_signature := krb.(krb_signature);
+  ksb_key_id    := krb.(krb_key_id);
+  ksb_verify    := krb.(krb_verify);
+|}.
+
+(* ================================================================== *)
+(* Key registry with rotation and revocation                           *)
+(* ================================================================== *)
+
+Inductive KeyStatus : Type :=
+  | KeyActive
+  | KeyRotated : string -> KeyStatus  (* rotated_to: successor key ID *)
+  | KeyRevoked : string -> KeyStatus. (* reason *)
+
+Record KeyEntry : Type := {
+  ke_key_id     : string;
+  ke_status     : KeyStatus;
+  ke_not_before : string;   (* ISO 8601: key valid from *)
+  ke_not_after  : string;   (* ISO 8601: key valid until *)
+}.
+
+Definition KeyRegistry := list KeyEntry.
+
+Fixpoint key_lookup (key_id : string) (reg : KeyRegistry)
+    : option KeyEntry :=
+  match reg with
+  | [] => None
+  | entry :: rest =>
+    if String.eqb entry.(ke_key_id) key_id then Some entry
+    else key_lookup key_id rest
+  end.
+
+(** A key is usable when it is active and the current time falls
+    within its validity window. *)
+Definition key_usable (entry : KeyEntry) (now : string) : bool :=
+  match entry.(ke_status) with
+  | KeyActive =>
+    negb (string_ltb now entry.(ke_not_before)) &&
+    negb (string_ltb entry.(ke_not_after) now)
+  | _ => false
+  end.
+
+(** Look up the active successor of a rotated key, following the
+    rotation chain up to [fuel] hops. *)
+Fixpoint resolve_key (reg : KeyRegistry) (key_id : string)
+    (fuel : nat) : option KeyEntry :=
+  match fuel with
+  | 0 => None
+  | S f =>
+    match key_lookup key_id reg with
+    | None => None
+    | Some entry =>
+      match entry.(ke_status) with
+      | KeyActive => Some entry
+      | KeyRotated successor => resolve_key reg successor f
+      | KeyRevoked _ => None
+      end
+    end
+  end.
+
+(** Validate a keyed blob against a key registry: the key must
+    be active (or resolvable via rotation) and the verifier must
+    accept the payload. *)
+Definition validate_keyed_blob (ksb : KeyedSignedBlob)
+    (reg : KeyRegistry) (now : string) : bool :=
+  match resolve_key reg ksb.(ksb_key_id) (length reg) with
+  | Some entry => key_usable entry now &&
+                  ksb.(ksb_verify) ksb.(ksb_payload) ksb.(ksb_signature)
+  | None => false
+  end.
+
+(** Soundness: validation implies the verifier accepted. *)
+Lemma validate_keyed_blob_sound : forall ksb reg now,
+    validate_keyed_blob ksb reg now = true ->
+    keyed_blob_valid ksb.
+Proof.
+  intros ksb reg now H. unfold validate_keyed_blob in H.
+  destruct (resolve_key reg ksb.(ksb_key_id) (length reg)); [| discriminate].
+  apply Bool.andb_true_iff in H. exact (proj2 H).
+Qed.
+
+(** Revocation check: resolve_key returns None for a revoked key. *)
+Lemma resolve_revoked_none : forall reg key_id reason nb na fuel,
+    key_lookup key_id reg =
+      Some {| ke_key_id := key_id;
+              ke_status := KeyRevoked reason;
+              ke_not_before := nb;
+              ke_not_after := na |} ->
+    fuel > 0 ->
+    resolve_key reg key_id fuel = None.
+Proof.
+  intros reg key_id reason nb na fuel Hlookup Hfuel.
+  destruct fuel as [|f]; [inversion Hfuel |].
+  simpl. rewrite Hlookup. reflexivity.
+Qed.
