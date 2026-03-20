@@ -958,6 +958,117 @@ Proof.
     + unfold avl_mk, avl_height. constructor; assumption.
 Qed.
 
+Lemma avl_insert_elements_sub : forall id n t id' n',
+    In (id', n') (avl_elements (avl_insert id n t)) ->
+    id' = id \/ In (id', n') (avl_elements t).
+Proof.
+  intros id n t. induction t as [|l IHl k v r IHr h]; intros id' n' Hin.
+  - unfold avl_insert in Hin. rewrite avl_elements_node, avl_elements_leaf in Hin.
+    simpl in Hin. destruct Hin as [Heq | []].
+    injection Heq as <- <-. left. reflexivity.
+  - unfold avl_insert in Hin; fold avl_insert in Hin.
+    destruct (String.compare id k) eqn:Hcmp.
+    + apply String.compare_eq_iff in Hcmp. subst.
+      rewrite avl_elements_node in Hin.
+      apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+      * right. rewrite avl_elements_node. apply in_or_app. left. exact Hin.
+      * destruct Hin as [Heq | Hin].
+        -- injection Heq as <- <-. left. reflexivity.
+        -- right. rewrite avl_elements_node. apply in_or_app. right. right. exact Hin.
+    + rewrite avl_balance_elements in Hin.
+      apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+      * destruct (IHl id' n' Hin) as [Heq | Hin'].
+        -- left. exact Heq.
+        -- right. rewrite avl_elements_node. apply in_or_app. left. exact Hin'.
+      * destruct Hin as [Heq | Hin].
+        -- right. rewrite avl_elements_node. apply in_or_app. right. left. exact Heq.
+        -- right. rewrite avl_elements_node. apply in_or_app. right. right. exact Hin.
+    + rewrite avl_balance_elements in Hin.
+      apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+      * right. rewrite avl_elements_node. apply in_or_app. left. exact Hin.
+      * destruct Hin as [Heq | Hin].
+        -- right. rewrite avl_elements_node. apply in_or_app. right. left. exact Heq.
+        -- destruct (IHr id' n' Hin) as [Heq | Hin'].
+           ++ left. exact Heq.
+           ++ right. rewrite avl_elements_node. apply in_or_app. right. right. exact Hin'.
+Qed.
+
+Lemma avl_insert_keys_lt : forall id n t bound,
+    (forall id' n', In (id', n') (avl_elements t) ->
+      String.compare id' bound = Lt) ->
+    String.compare id bound = Lt ->
+    forall id' n', In (id', n') (avl_elements (avl_insert id n t)) ->
+    String.compare id' bound = Lt.
+Proof.
+  intros id n t bound Hkeys Hid id' n' Hin.
+  destruct (avl_insert_elements_sub id n t id' n' Hin) as [Heq | Hin'].
+  - subst. exact Hid.
+  - exact (Hkeys id' n' Hin').
+Qed.
+
+Lemma avl_insert_keys_gt : forall id n t bound,
+    (forall id' n', In (id', n') (avl_elements t) ->
+      String.compare id' bound = Gt) ->
+    String.compare id bound = Gt ->
+    forall id' n', In (id', n') (avl_elements (avl_insert id n t)) ->
+    String.compare id' bound = Gt.
+Proof.
+  intros id n t bound Hkeys Hid id' n' Hin.
+  destruct (avl_insert_elements_sub id n t id' n' Hin) as [Heq | Hin'].
+  - subst. exact Hid.
+  - exact (Hkeys id' n' Hin').
+Qed.
+
+Lemma avl_find_In_elements : forall id n t,
+    avl_find id t = Some n ->
+    In (id, n) (avl_elements t).
+Proof.
+  intros id n t. induction t as [|l IHl k v r IHr h]; intro Hf.
+  - unfold avl_find in Hf. discriminate.
+  - unfold avl_find in Hf; fold avl_find in Hf.
+    rewrite avl_elements_node. apply in_or_app.
+    destruct (String.compare id k) eqn:Ec.
+    + apply String.compare_eq_iff in Ec. subst. injection Hf as <-.
+      right. left. reflexivity.
+    + left. exact (IHl Hf).
+    + right. right. exact (IHr Hf).
+Qed.
+
+Lemma avl_insert_preserves_ordered : forall id n t,
+    AVL_ordered t -> AVL_ordered (avl_insert id n t).
+Proof.
+  intros id n t. induction t as [|l IHl k v r IHr h]; intro Hord.
+  - unfold avl_insert. constructor; try constructor;
+      intros id' n'; unfold avl_find; fold avl_find; discriminate.
+  - unfold avl_insert; fold avl_insert.
+    inversion Hord as [|? ? ? ? ? Hol Hor Hkl Hkr]; subst.
+    destruct (String.compare id k) eqn:Hcmp.
+    + apply String.compare_eq_iff in Hcmp. subst.
+      constructor; assumption.
+    + apply avl_balance_ordered; [exact (IHl Hol) | exact Hor | |exact Hkr].
+      intros id' n' Hf.
+      apply (avl_insert_keys_lt id n l k
+               (fun id0 n0 Hin => Hkl id0 n0 (avl_find_In_ordered id0 n0 l Hol Hin))
+               Hcmp id' n'
+               (avl_find_In_elements id' n' (avl_insert id n l) Hf)).
+    + apply avl_balance_ordered; [exact Hol | exact (IHr Hor) | exact Hkl |].
+      intros id' n' Hf.
+      apply (avl_insert_keys_gt id n r k
+               (fun id0 n0 Hin => Hkr id0 n0 (avl_find_In_ordered id0 n0 r Hor Hin))
+               Hcmp id' n'
+               (avl_find_In_elements id' n' (avl_insert id n r) Hf)).
+Qed.
+
+Lemma avl_insert_find : forall id n t,
+    AVL_ordered t ->
+    avl_find id (avl_insert id n t) = Some n.
+Proof.
+  intros id n t Hord.
+  exact (avl_find_In_ordered id n (avl_insert id n t)
+           (avl_insert_preserves_ordered id n t Hord)
+           (avl_insert_In id n t)).
+Qed.
+
 (* --- Boolean refinement check (concrete cases) --- *)
 
 Definition check_avl_refines (ac : AssuranceCase) : bool :=
