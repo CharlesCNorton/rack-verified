@@ -1063,10 +1063,35 @@ Qed.
 (* Render / parse JSON roundtrip (string case)                         *)
 (* ================================================================== *)
 
-(** The full render/parse roundtrip for JSON strings requires a
-    parse_string_chars fuel monotonicity lemma that is left for
-    the JArr/JObj roundtrip work.  The core string-level roundtrip
-    is [escape_unescape_roundtrip] above. *)
+(** If [parse_string_chars] succeeds at fuel [f1], it succeeds
+    with the same result at any fuel [f2 >= f1]. *)
+Lemma parse_string_chars_mono : forall f1 s acc result,
+    parse_string_chars f1 s acc = Some result ->
+    forall f2, f1 <= f2 ->
+    parse_string_chars f2 s acc = Some result.
+Proof.
+  induction f1 as [|f1' IH]; intros s acc result H1 f2 Hle.
+  - simpl in H1. discriminate.
+  - destruct f2 as [|f2']; [lia |].
+    apply Nat.succ_le_mono in Hle.
+    simpl in H1 |- *.
+    destruct s as [|c rest]; [exact H1 |].
+    destruct (is_char_code c 34); [exact H1 |].
+    destruct (is_char_code c 92).
+    + destruct rest as [|c2 rest2]; [exact H1 |].
+      destruct (is_char_code c2 34); [exact (IH _ _ _ H1 f2' Hle) |].
+      destruct (is_char_code c2 92); [exact (IH _ _ _ H1 f2' Hle) |].
+      destruct (is_char_code c2 110); [exact (IH _ _ _ H1 f2' Hle) |].
+      destruct (is_char_code c2 114); [exact (IH _ _ _ H1 f2' Hle) |].
+      destruct (is_char_code c2 116); [exact (IH _ _ _ H1 f2' Hle) |].
+      destruct (is_char_code c2 98); [exact (IH _ _ _ H1 f2' Hle) |].
+      destruct (is_char_code c2 102); [exact (IH _ _ _ H1 f2' Hle) |].
+      destruct (is_char_code c2 117).
+      * destruct (parse_unicode_escape_local rest2) as [[ch rest3]|];
+          [exact (IH _ _ _ H1 f2' Hle) | exact H1].
+      * exact H1.
+    + exact (IH _ _ _ H1 f2' Hle).
+Qed.
 
 (* ================================================================== *)
 (* Full AST render/parse roundtrip                                     *)
