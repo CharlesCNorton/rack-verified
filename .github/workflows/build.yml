@@ -40,6 +40,9 @@ jobs:
             fi
             echo "No extraction warnings found"
             endGroup
+            startGroup "Install OCaml dependencies"
+            opam install digestif -y
+            endGroup
             startGroup "Build OCaml binaries"
             make ocaml
             endGroup
@@ -148,8 +151,8 @@ jobs:
         with:
           ocaml-compiler: '4.14'
 
-      - name: Install Rocq
-        run: opam install rocq-prover.9.0.0 -y
+      - name: Install Rocq and dependencies
+        run: opam install rocq-prover.9.0.0 digestif -y
 
       - name: Build Rocq
         run: |

@@ -18,6 +18,7 @@ dev-repo: "git+https://github.com/CharlesCNorton/rack-verified.git"
 depends: [
   "coq" {>= "9.0"}
   "ocaml" {>= "4.14"}
+  "digestif" {>= "1.1"}
 ]
 depopts: [
   "coq-compcert" {>= "3.15"}

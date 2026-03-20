@@ -22,7 +22,7 @@ doc: all
 	  theories/ProductLine.v theories/Bridge.v \
 	  theories/CaseStudy.v theories/Example.v
 
-OCAMLOPT := ocamlfind ocamlopt -package str -I ocaml -I test
+OCAMLOPT := ocamlfind ocamlopt -package str,digestif.ocaml -I ocaml -I test
 
 ocaml: extract
 	$(OCAMLOPT) -c rack.mli rack.ml ocaml/rack_util.ml
