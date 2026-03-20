@@ -1069,6 +1069,64 @@ Proof.
            (avl_insert_In id n t)).
 Qed.
 
+Lemma avl_insert_elements_keep : forall id n t id' n',
+    id' <> id ->
+    In (id', n') (avl_elements t) ->
+    In (id', n') (avl_elements (avl_insert id n t)).
+Proof.
+  intros id n t. induction t as [|l IHl k v r IHr h]; intros id' n' Hne Hin.
+  - rewrite avl_elements_leaf in Hin. destruct Hin.
+  - rewrite avl_elements_node in Hin. apply in_app_or in Hin.
+    unfold avl_insert; fold avl_insert.
+    destruct (String.compare id k) eqn:Hcmp.
+    + apply String.compare_eq_iff in Hcmp. subst.
+      rewrite avl_elements_node. apply in_or_app.
+      destruct Hin as [Hin | Hin].
+      * left. exact Hin.
+      * right. destruct Hin as [Heq | Hin].
+        -- injection Heq as Heq1 <-. exfalso. exact (Hne (eq_sym Heq1)).
+        -- right. exact Hin.
+    + rewrite avl_balance_elements. apply in_or_app.
+      destruct Hin as [Hin | Hin].
+      * left. exact (IHl id' n' Hne Hin).
+      * right. exact Hin.
+    + rewrite avl_balance_elements. apply in_or_app.
+      destruct Hin as [Hin | Hin].
+      * left. exact Hin.
+      * right. destruct Hin as [Heq | Hin].
+        -- left. exact Heq.
+        -- right. exact (IHr id' n' Hne Hin).
+Qed.
+
+Lemma avl_insert_find_other : forall id id0 n t,
+    AVL_ordered t ->
+    id0 <> id ->
+    avl_find id0 (avl_insert id n t) = avl_find id0 t.
+Proof.
+  intros id id0 n t Hord Hne.
+  destruct (avl_find id0 t) eqn:Hf.
+  - exact (avl_find_In_ordered id0 n0 (avl_insert id n t)
+      (avl_insert_preserves_ordered id n t Hord)
+      (avl_insert_elements_keep id n t id0 n0 Hne
+        (avl_find_In_elements id0 n0 t Hf))).
+  - destruct (avl_find id0 (avl_insert id n t)) eqn:Hf'; [|reflexivity].
+    exfalso.
+    destruct (avl_insert_elements_sub id n t id0 n0
+                (avl_find_In_elements id0 n0 _ Hf')) as [Heq | Hin].
+    + exact (Hne Heq).
+    + pose proof (avl_find_In_ordered id0 n0 t Hord Hin) as Habs.
+      rewrite Hf in Habs. discriminate.
+Qed.
+
+Lemma avl_find_iff_elements : forall id n t,
+    AVL_ordered t ->
+    (avl_find id t = Some n <-> In (id, n) (avl_elements t)).
+Proof.
+  intros id n t Hord. split.
+  - exact (avl_find_In_elements id n t).
+  - exact (avl_find_In_ordered id n t Hord).
+Qed.
+
 (* --- Boolean refinement check (concrete cases) --- *)
 
 Definition check_avl_refines (ac : AssuranceCase) : bool :=
